@@ -1,0 +1,549 @@
+<!--
+A) 仕様の要約
+- 画面は上下 2 分割。
+  - 上：Canvas に 1〜10 個の丸を「重ならないように」ランダム配置。
+  - 下：1〜10 の数字ボタン＋スタート／リトライ。
+- スタート押下 → 3 秒カウントダウン → 10 問連続出題。
+- 各問で表示する丸の半径 r は「同一」で、問ごとに r ∈ [r_max/2, r_max] でランダム。
+  - r_max は「与えた個数 n を衝突なく置ける最大目安半径」をヒューリスティックに推定。
+- 10 問終了後、正答数と 10 問の合計回答時間を表示。
+- iPhone / iPad 対応（viewport、Pointer Events、初回タップで WebAudio 解錠）。
+- 1 ファイル完結。外部 CDN 不使用。GitHub Pages 配備可。
+-->
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <!-- iOS 向け：安全域（ノッチ）考慮＋ズーム固定で誤タップ回避 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>数あて：上下分割・非重複の丸</title>
+  <style>
+    /* =========================
+       配色や影のトークン
+       ========================= */
+    :root {
+      --bg: #0f1220;
+      --panel: #171a2a;
+      --panel2: #0c1020;
+      --text: #e8ecf1;
+      --muted: #99a3b3;
+      --accent: #5cc8ff;  /* 主要ボタン色 */
+      --ok: #4cd964;      /* 正解色 */
+      --ng: #ff3b30;      /* 不正解色 */
+      --btn: #22263a;
+      --btnActive: #2f3552;
+      --shadow: 0 8px 24px rgba(0,0,0,.35);
+    }
+
+    /* タップ時の青いハイライトを無効化 */
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; }
+
+    /* 画面全体の背景と基本フォント */
+    body {
+      margin: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      background: radial-gradient(100% 100% at 0% 0%, #0e142a, #0a0d1a 60%), var(--bg);
+      color: var(--text);
+      font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      height: 100svh;      /* iOS のアドレスバー変動対策 */
+      overflow: hidden;     /* 背景のはみ出し防止 */
+      touch-action: manipulation; /* タッチ遅延の回避 */
+    }
+
+    /* アプリの上下レイアウト */
+    .app {
+      height: 100%;
+      display: flex;
+      flex-direction: column; /* 上下並び */
+      gap: 10px;
+      padding: 10px;
+    }
+
+    /* 上（問題）・下（操作）パネルの見た目 */
+    .top, .bottom {
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0; /* Flex 内で縮められるように */
+    }
+    .top { flex: 1; gap: 8px; }    /* 上側は可変高さ（主領域） */
+    .bottom { gap: 12px; }          /* 下側はボタン群 */
+
+    /* ヘッダ（ステータス表示など） */
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+    h1 { font-size: 16px; margin: 0; color: var(--text); font-weight: 700; }
+    .sub { color: var(--muted); font-size: 12px; }
+
+    /* 数字ボタンは 5 列 × 2 行（1〜10） */
+    .btnRow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+    button.num {
+      appearance: none; border: 0; border-radius: 14px; padding: 16px 0;
+      font-size: 22px; font-weight: 800; color: var(--text);
+      background: var(--btn); box-shadow: var(--shadow);
+      transition: transform .06s ease, background .12s ease; touch-action: manipulation;
+    }
+    button.num:active { transform: translateY(1px) scale(.99); background: var(--btnActive); }
+    button.num[disabled] { opacity: .5; filter: grayscale(30%); }
+
+    /* スタート／リトライ */
+    .actions { display: flex; gap: 8px; }
+    button.secondary { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid #2d3352; background: #1a1f36; color: var(--text); font-weight: 700; }
+    button.primary   { flex: 1; padding: 12px; border-radius: 12px; border: 0; background: var(--accent); color: #00121a; font-weight: 900; }
+
+    /* Canvas ラッパーと背景 */
+    .canvasWrap { position: relative; flex: 1; min-height: 0; }
+    canvas { width: 100%; height: 100%; display: block; border-radius: 12px; background: radial-gradient(120% 100% at 100% 0%, #0a1530, #091023 60%); }
+
+    /* ステータス用ピル表示 */
+    .hud { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .pill { padding: 6px 10px; border-radius: 999px; background: #14182a; border: 1px solid #2a2f4a; color: var(--muted); font-size: 12px; }
+    .result { font-weight: 800; font-size: 14px; }
+    .result.ok { color: var(--ok); }
+    .result.ng { color: var(--ng); }
+
+    /* トースト（正解／不正解の一時表示） */
+    .toast { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+    .toast > div { font-size: 40px; font-weight: 900; opacity: 0; transform: translateY(8px) scale(.98); transition: opacity .2s, transform .2s; padding: 8px 16px; border-radius: 12px; }
+    .toast.show > .ok { color: var(--ok); opacity: 1; transform: translateY(0) scale(1); background: rgba(30, 60, 30, .25); }
+    .toast.show > .ng { color: var(--ng); opacity: 1; transform: translateY(0) scale(1); background: rgba(80, 20, 20, .25); }
+
+    /* カウントダウンや結果用の半透明オーバーレイ */
+    .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); border-radius: 12px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .overlay.show { opacity: 1; pointer-events: auto; }
+    .overlay .big { font-size: clamp(40px, 8vw, 84px); font-weight: 900; letter-spacing: .04em; }
+    .overlay .panel { background: #0f1328; border: 1px solid #2a2f4a; padding: 16px 18px; border-radius: 14px; box-shadow: var(--shadow); text-align: center; }
+    .overlay .panel h2 { margin: 0 0 8px; font-size: 18px; }
+    .overlay .panel p  { margin: 4px 0; color: var(--muted); font-size: 14px; }
+
+    /* モバイル縮小時の余白最適化 */
+    @media (max-width: 800px) {
+      .app { gap: 8px; padding: 8px; }
+      .btnRow { gap: 8px; }
+      button.num { padding: 14px 0; font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+
+    <!-- 上：問題パネル（HUD + Canvas + オーバーレイ） -->
+    <section class="top" aria-label="問題パネル">
+      <div class="hud">
+        <div class="pill" id="status">スタートを押してください</div>
+        <div class="pill result" id="result">&nbsp;</div>
+      </div>
+      <div class="canvasWrap">
+        <!-- 図形描画の主役 -->
+        <canvas id="cv" aria-label="丸が描かれたキャンバス" role="img"></canvas>
+        <!-- 正解／不正解の瞬間表示 -->
+        <div class="toast" id="toast">
+          <div class="ok">正解</div>
+          <div class="ng">不正解</div>
+        </div>
+        <!-- カウントダウンや結果ダイアログ用のオーバーレイ -->
+        <div class="overlay" id="overlay"><div class="big" id="overlayText"></div></div>
+      </div>
+    </section>
+
+    <!-- 下：操作パネル（説明 + 数字ボタン + スタート／リトライ） -->
+    <section class="bottom" aria-label="選択パネル">
+      <header>
+        <h1>いくつある？</h1>
+      </header>
+      <div class="sub">上の丸の個数を選んでください</div>
+      <div class="btnRow" id="btnRow" role="group" aria-label="数字ボタン 1〜10"></div>
+      <div class="actions">
+        <button class="secondary" id="retry" title="リトライ">リトライ</button>
+        <button class="primary" id="start" title="スタート">スタート</button>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+  (function(){
+    'use strict';
+
+    /* ==========================================================
+       ユーティリティ：DOM ショートカットと乱数、クランプ
+       ========================================================== */
+    const $  = (q, el=document) => el.querySelector(q);                 // 単一要素取得
+    const $$ = (q, el=document) => Array.from(el.querySelectorAll(q));  // 複数要素配列
+    const clamp  = (x,a,b)=>Math.max(a,Math.min(b,x));                  // 範囲制限
+    const rand   = (min,max)=>Math.random()*(max-min)+min;              // [min,max) 一様乱数
+    const randInt= (min,max)=>Math.floor(rand(min,max+1));              // 整数版（両端含む）
+
+    /* ==========================================================
+       効果音（WebAudio）：初回タップで解錠 → 簡易ビープ合成
+       - iOS はユーザー操作後でないと音を鳴らせないため解錠が必要
+       ========================================================== */
+    let audioCtx = null;      // AudioContext 実体
+    let audioUnlocked = false;// 解錠済みフラグ
+
+    // 初回タップで AudioContext を起動
+    function ensureAudio(){
+      if (audioUnlocked) return;
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint:'interactive' });
+      if (audioCtx.state !== 'running') audioCtx.resume();
+      audioUnlocked = true;
+    }
+
+    /**
+     * 単純なビープ音を生成して再生するヘルパー
+     * @param {number} freq   周波数 Hz
+     * @param {number} dur    音の長さ 秒
+     * @param {string} type   波形 'sine'|'square'|'triangle'|'sawtooth'
+     * @param {number} gain   音量（0〜1）
+     * @param {number} when   再生までの遅延 秒
+     * @param {number} endGain フェードアウト終端音量
+     */
+    function beep({ freq=440, dur=0.08, type='sine', gain=0.2, when=0, endGain=0.0001 }){
+      if (!audioUnlocked) return;              // 未解錠なら無音で無視
+      const t0 = audioCtx.currentTime + when;  // 開始時刻
+      const o = audioCtx.createOscillator();   // 発振器
+      const g = audioCtx.createGain();         // 音量制御
+      o.type = type; o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(gain, t0);        // 立ち上がり
+      g.gain.exponentialRampToValueAtTime(endGain, t0 + dur); // 短い減衰
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t0); o.stop(t0 + dur + 0.02);
+    }
+
+    // 用途別の効果音（タップ／正解／不正解／カウントダウン）
+    const sfxTap = ()=>beep({ freq:280, dur:0.05, type:'triangle', gain:0.15 });
+    const sfxOk  = ()=>{ beep({ freq:520, dur:0.07, type:'sine', gain:0.18 }); beep({ freq:820, dur:0.07, type:'sine', gain:0.16, when:0.06 }); };
+    const sfxNg  = ()=>{ beep({ freq:180, dur:0.11, type:'square',  gain:0.18 }); beep({ freq:140, dur:0.12, type:'square',  gain:0.16, when:0.06 }); };
+    const sfxTick= ()=>beep({ freq:480, dur:0.06, type:'square',  gain:0.16 });
+    const sfxGo  = ()=>{ beep({ freq:700, dur:0.08, type:'triangle',gain:0.20 }); beep({ freq:1000,dur:0.10, type:'triangle',gain:0.18, when:0.08 }); };
+
+    // ドキュメント全体で最初の pointerdown を解錠トリガーに利用
+    const unlock = () => { ensureAudio(); document.removeEventListener('pointerdown', unlock, true); };
+    document.addEventListener('pointerdown', unlock, true);
+
+    /* ==========================================================
+       要素参照のキャッシュ
+       ========================================================== */
+    const cv = $('#cv');
+    const ctx = cv.getContext('2d', { alpha: true, desynchronized: true }); // desynchronized: スクロール干渉を減らすヒント
+    const statusEl = $('#status');   // ステータス表示（Q 番号など）
+    const resultEl = $('#result');   // 正解／不正解の文言
+    const toast    = $('#toast');    // トースト（短時間表示）
+    const overlay  = $('#overlay');  // カウントダウン／結果パネル
+    const overlayText = $('#overlayText');
+
+    const startBtn = $('#start');
+    const retryBtn = $('#retry');
+
+    /* ==========================================================
+       ゲーム状態の単一オブジェクト
+       - dpr: 端末のピクセル密度（描画の鮮明さに使用）
+       - cssW/H: CSS ピクセルでのキャンバスサイズ
+       - dirty: 再描画が必要な時に true
+       - circles: 丸の配置結果（{x,y,r} の配列）
+       - r: 現在の問で採用した半径
+       - started: ゲーム進行中か
+       - qIndex: 進行中の問番号（1〜qTotal）
+       - qTotal: 総問数（10）
+       - count: 正解の個数
+       - correct: 正答数
+       - totalMs: 合計回答時間（ミリ秒）
+       - qStartTs: 問表示時刻（ミリ秒）
+       - accepting: 入力受付中か（多重入力防止）
+       ========================================================== */
+    const state = {
+      dpr: Math.max(1, Math.min(3, window.devicePixelRatio || 1)),
+      cssW: 300, cssH: 300,
+      dirty: true,
+      circles: [],
+      r: 10,
+      started: false,
+      qIndex: 0,
+      qTotal: 10,
+      count: 0,
+      correct: 0,
+      totalMs: 0,
+      qStartTs: 0,
+      accepting: false,
+    };
+
+    /* ==========================================================
+       キャンバスの実ピクセル解像度を DPR に合わせて更新
+       - CSS サイズ → 実ピクセル幅高へ変換
+       - setTransform で以後の描画を CSS ピクセル基準に統一
+       ========================================================== */
+    function resizeCanvas(){
+      const rect = cv.getBoundingClientRect();
+      state.cssW = Math.max(100, rect.width|0);
+      state.cssH = Math.max(100, rect.height|0);
+      const pw = Math.floor(state.cssW * state.dpr);
+      const ph = Math.floor(state.cssH * state.dpr);
+      if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0); // 以後は CSS px 指定で OK
+      state.dirty = true;
+    }
+    // 要素のサイズ変化を監視（レイアウト変更や回転に追随）
+    const ro = new ResizeObserver(resizeCanvas); ro.observe(cv);
+    window.addEventListener('orientationchange', resizeCanvas);
+
+    /* ==========================================================
+       円の非重複ランダム配置（パッキング）ヘルパー
+       1) tryPlaceMaxR(n): 個数 n を置ける最大目安半径 r_max を推定
+          - まず大きめの r から配置を試み、失敗したら段階的に縮小して再試行
+          - 成功した r を r_max とみなす
+       2) placeWithFixedR(n, r): 半径 r を固定して実際の座標を決定
+          - 既存円との距離が (r1+r2+pad) 未満なら衝突としてリジェクト
+       ========================================================== */
+    function tryPlaceMaxR(n){
+      const w = state.cssW, h = state.cssH;
+      // 画面面積の 55% 程度を上限にするヒューリスティックで初期半径を見積もる
+      let r = Math.sqrt((w*h*0.55)/(n*Math.PI));
+      r = clamp(r, 10, Math.min(w, h)/6); // 最小半径 10px、最大は短辺の 1/6
+      const pad = 4; // 円間の最小スキマ（見た目の密着回避）
+      for (let shrink=0; shrink<8; shrink++){
+        const circles = [];
+        let attempts = 0; const maxAttempts = 1200; // 無限ループ防止
+        while (circles.length < n && attempts < maxAttempts){
+          attempts++;
+          const cx = rand(r+pad, w - r - pad);
+          const cy = rand(r+pad, h - r - pad);
+          let hit = false;
+          for (let i=0;i<circles.length;i++){
+            const c = circles[i]; const dx = c.x - cx, dy = c.y - cy;
+            if ((dx*dx + dy*dy) < ((c.r + r + pad)*(c.r + r + pad))) { hit = true; break; }
+          }
+          if (!hit) circles.push({ x: cx, y: cy, r });
+        }
+        if (circles.length === n) { return { ok:true, rMax:r }; } // この r なら n 個置ける
+        r *= 0.9; // 置けなかった → 少し縮めて再挑戦
+      }
+      // 非常時のデフォルト（極端な縦横比など）
+      return { ok:false, rMax: Math.min(w, h)/10 };
+    }
+
+    function placeWithFixedR(n, r){
+      const w = state.cssW, h = state.cssH; const pad = 4; const circles = [];
+      let attempts = 0; const maxAttempts = 2400;
+      while (circles.length < n && attempts < maxAttempts){
+        attempts++;
+        const cx = rand(r+pad, w - r - pad);
+        const cy = rand(r+pad, h - r - pad);
+        let hit = false;
+        for (let i=0;i<circles.length;i++){
+          const c = circles[i]; const dx = c.x - cx, dy = c.y - cy;
+          if ((dx*dx + dy*dy) < ((c.r + r + pad)*(c.r + r + pad))) { hit = true; break; }
+        }
+        if (!hit) circles.push({ x: cx, y: cy, r });
+      }
+      if (circles.length === n) { state.circles = circles; state.r = r; return true; }
+      return false; // 稀に失敗した場合は r を縮めて再試行（呼び出し側で対応）
+    }
+
+    /* ==========================================================
+       新しい問題を作る
+       手順:
+       1) 目標個数 n を 1〜10 からランダムに選ぶ
+       2) tryPlaceMaxR(n) で r_max を推定（無理なら n を 1 ずつ減らして再試行）
+       3) r ∈ [r_max/2, r_max] を選んで placeWithFixedR(n, r) で座標を確定
+       4) タイマー開始・UI 更新
+       ========================================================== */
+    function newProblem(){
+      let n = randInt(1,10);            // 1) 個数の乱択
+      let placed = false; let rMax = 12; // デフォルト値（失敗時の保険）
+
+      // 2) 極端な縦横比で置けない場合は n を下げて妥協
+      while (n >= 1 && !placed){
+        const probe = tryPlaceMaxR(n);
+        if (probe.ok){ rMax = probe.rMax; placed = true; } else { n--; }
+      }
+
+      if (!placed){
+        // 最終保険：中央に 1 個だけ置く
+        state.count = 1;
+        state.circles = [{ x: state.cssW/2, y: state.cssH/2, r: Math.min(state.cssW, state.cssH)/8 }];
+      } else {
+        // 3) 問ごとの半径を r_max/2〜r_max から選び、固定半径で本配置
+        const rChosen = rand(rMax/2, rMax);
+        let ok = placeWithFixedR(n, rChosen);
+        // 稀に失敗：半径を少しずつ縮めて救済、それでもダメなら r_max で試す
+        if (!ok){ let r = rChosen; for (let i=0;i<6 && !ok; i++){ r *= 0.9; ok = placeWithFixedR(n, r); } if (!ok) ok = placeWithFixedR(n, rMax); }
+        state.count = n;
+      }
+
+      // 4) この問の計測開始
+      state.accepting = true;
+      state.dirty = true;               // 再描画フラグ
+      state.qStartTs = performance.now();
+      resultEl.textContent = '\u00A0';
+      resultEl.className = 'pill result';
+      statusEl.textContent = `Q ${state.qIndex}/${state.qTotal}`;
+    }
+
+    /* ==========================================================
+       描画：影付きのカラフルな円を描く
+       - index ごとに色相をずらして視認性を上げる
+       ========================================================== */
+    function draw(){
+      ctx.clearRect(0, 0, state.cssW, state.cssH);
+      const circles = state.circles; if (!circles || !circles.length) return;
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
+      for (let i=0;i<circles.length;i++){
+        const c = circles[i]; const hue = (i*47 + 180) % 360;
+        ctx.fillStyle = `hsl(${hue} 80% 55% / 0.95)`;
+        ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    /* ==========================================================
+       rAF ループ：dirty の時だけ再描画（省電力）
+       ========================================================== */
+    function loop(){ if (state.dirty) { draw(); state.dirty = false; } requestAnimationFrame(loop); }
+
+    /* ==========================================================
+       UI 関連：ボタン生成・有効化、トーストとオーバーレイ
+       ========================================================== */
+    function setNumButtonsEnabled(on){ $$('#btnRow .num').forEach(b=>b.disabled = !on); }
+
+    // 1〜10 のボタンを生成（初期は無効）
+    function makeButtons(){
+      const row = $('#btnRow'); row.innerHTML = '';
+      for (let n=1; n<=10; n++){
+        const b = document.createElement('button');
+        b.className = 'num'; b.textContent = String(n); b.setAttribute('data-n', String(n));
+        b.disabled = true; // 問題表示までは誤操作防止
+        b.addEventListener('pointerup', onChoose, { passive: true });
+        row.appendChild(b);
+      }
+    }
+
+    // 正解／不正解の短時間表示
+    function showToast(ok){
+      toast.classList.remove('show'); void toast.offsetHeight; // 再トリガー用 reflow
+      toast.classList.add('show');
+      toast.children[0].style.display = ok ? 'block' : 'none';
+      toast.children[1].style.display = ok ? 'none' : 'block';
+      setTimeout(()=>toast.classList.remove('show'), 650);
+    }
+
+    // 全面オーバーレイのテキスト表示
+    function showOverlay(text){ overlayText.textContent = text; overlay.classList.add('show'); }
+    function hideOverlay(){ overlay.classList.remove('show'); }
+
+    // 3,2,1,START のカウントダウン（音付き）
+    function countdown3(onDone){
+      showOverlay('3'); sfxTick();
+      setTimeout(()=>{ showOverlay('2'); sfxTick(); }, 1000);
+      setTimeout(()=>{ showOverlay('1'); sfxTick(); }, 2000);
+      setTimeout(()=>{ showOverlay('START'); sfxGo(); setTimeout(hideOverlay, 350); onDone(); }, 3000);
+    }
+
+    /* ==========================================================
+       回答処理：入力を 1 回だけ受け、判定→スコア更新→次へ
+       ========================================================== */
+    function onChoose(e){
+      if (!state.started || !state.accepting) return; // 受付外なら無視
+      ensureAudio(); sfxTap();
+      state.accepting = false; setNumButtonsEnabled(false);
+
+      const n = Number(e.currentTarget.getAttribute('data-n'))|0; // 押された数字
+      const ok = (n === state.count);
+
+      // この問の経過時間を計上
+      const now = performance.now();
+      const elapsed = Math.max(0, now - state.qStartTs);
+      state.totalMs += elapsed;
+
+      // 文言と音、トースト表示
+      if (ok) { sfxOk(); state.correct++; resultEl.textContent = '正解'; resultEl.className = 'pill result ok'; }
+      else    { sfxNg(); resultEl.textContent = `不正解（正解は ${state.count}）`; resultEl.className = 'pill result ng'; }
+      showToast(ok);
+
+      // 少し待ってから次へ（視認性のため）
+      setTimeout(nextStep, 650);
+    }
+
+    /* ==========================================================
+       次のステップ：全 10 問の進行制御
+       ========================================================== */
+    function nextStep(){
+      if (!state.started) return;
+      if (state.qIndex >= state.qTotal){ finishGame(); return; }
+      state.qIndex++;           // 次の問番号へ
+      newProblem();             // 新しい配置を作る
+      setNumButtonsEnabled(true);
+    }
+
+    /* ==========================================================
+       結果表示：正答数と合計タイムをオーバーレイに表示
+       ========================================================== */
+    function finishGame(){
+      state.started = false;
+      setNumButtonsEnabled(false);
+      const sec = state.totalMs / 1000;
+      const secStr = sec.toFixed(2);
+      statusEl.textContent = '結果';
+      resultEl.textContent = `正答 ${state.correct} / ${state.qTotal} ・ 合計 ${secStr} 秒`;
+      resultEl.className = 'pill result';
+
+      // 簡易結果ダイアログ
+      showOverlay("");
+      overlay.innerHTML = `<div class="panel">
+        <h2>結果</h2>
+        <p>正答数：<strong>${state.correct} / ${state.qTotal}</strong></p>
+        <p>合計タイム：<strong>${secStr} 秒</strong></p>
+        <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;">
+          <button id="again" class="primary" style="padding:10px 16px;border-radius:12px;border:0;background:var(--accent);color:#00121a;font-weight:900;">もう一度</button>
+        </div>
+      </div>`;
+      overlay.classList.add('show');
+      $('#again').addEventListener('pointerup', ()=>{ sfxTap(); hideOverlay(); resetGame(true); }, { passive:true });
+    }
+
+    /* ==========================================================
+       リセット：状態を初期化して待機画面へ
+       - keepUnlocked = false で呼ぶと、音の解錠もリセット
+       ========================================================== */
+    function resetGame(keepUnlocked=false){
+      if (!keepUnlocked) { audioUnlocked = false; document.addEventListener('pointerdown', unlock, true); }
+      state.started = false; state.qIndex = 0; state.correct = 0; state.totalMs = 0; state.count = 0; state.circles = []; state.accepting = false;
+      statusEl.textContent = 'スタートを押してください';
+      resultEl.textContent = '\u00A0';
+      resultEl.className = 'pill result';
+      state.dirty = true;
+      setNumButtonsEnabled(false);
+    }
+
+    /* ==========================================================
+       スタート処理：カウントダウン → 1 問目へ
+       ========================================================== */
+    function startGame(){
+      ensureAudio(); sfxTap();
+      resetGame(true);                         // 状態リセット（音の解錠は維持）
+      state.started = true; statusEl.textContent = 'カウントダウン中';
+      countdown3(()=>{ state.qIndex = 0; nextStep(); });
+    }
+
+    // ボタンのイベント登録
+    startBtn.addEventListener('pointerup', startGame, { passive:true });
+    retryBtn.addEventListener('pointerup', ()=>{ ensureAudio(); sfxTap(); resetGame(true); }, { passive:true });
+
+    /* ==========================================================
+       初期化：ボタン生成 → キャンバス調整 → ループ開始
+       画面サイズが変わったら、進行中でも配置を作り直して視認性を保つ
+       ========================================================== */
+    makeButtons();
+    resizeCanvas();
+    loop();
+    window.addEventListener('resize', ()=>{
+      resizeCanvas();
+      if (state.started && state.accepting){ newProblem(); }
+    });
+
+  })();
+  </script>
+</body>
+</html>

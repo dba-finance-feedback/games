@@ -1,47 +1,87 @@
+<!--
+A) 仕様の要約（コメント拡充版）
+- 画面は上下 2 分割。
+  - 上：3〜6個の数字ボタン（0〜9）を「重ならないように」ランダム配置。
+  - 下：スタート／リトライボタン＋遊び方説明＋ベスト記録表示。
+- スタート押下 → 3 秒カウントダウン → 10 問連続出題。
+- 各問で 3〜6 個の数字ボタンがランダム位置に出現。
+- プレイヤーは「最大の数字」のボタンをタップして選択。
+- 正解時は緑色、不正解時は赤色にフラッシュ＋効果音。
+- 10 問終了後、正答数と合計回答時間を表示。
+- ベスト記録（正答数優先、同点なら時間で比較）を localStorage に保存。
+- iPhone / iPad 対応（viewport、Pointer Events、初回タップで WebAudio 解錠）。
+- 1 ファイル完結。外部 CDN 不使用。GitHub Pages 配備可。
+- デザインは他のゲーム（how_many_bolls.html, which_is_more.html）と統一。
+-->
 <!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>最大の数字をタップ！（One-Page版：iOS対応）</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>最大の数字をタップ！</title>
   <style>
-    :root{
-      --bg:#0b0e14; --card:#121826; --text:#eef2ff; --muted:#9aa4b2; --accent:#60a5fa;
-      --ok:#22c55e; --ng:#ef4444; --btn:#1f2937; --shadow:0 6px 16px rgba(0,0,0,.25);
-      --radius:16px; --tap:180ms; --gap:12px;
+    /* =========================
+       配色や影のトークン
+       ========================= */
+    :root {
+      --bg: #0f1220;
+      --panel: #171a2a;
+      --panel2: #0c1020;
+      --text: #e8ecf1;
+      --muted: #99a3b3;
+      --accent: #5cc8ff;  /* 主要ボタン色 */
+      --ok: #4cd964;      /* 正解色 */
+      --ng: #ff3b30;      /* 不正解色 */
+      --btn: #22263a;
+      --btnActive: #2f3552;
+      --shadow: 0 8px 24px rgba(0,0,0,.35);
     }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN","Noto Sans JP", Arial, sans-serif;
-      background:linear-gradient(180deg,#0b0e14 0%, #0e1320 100%); color:var(--text);
-      -webkit-tap-highlight-color: transparent; -webkit-touch-callout:none; user-select:none;
-      padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+
+    /* タップ時の青いハイライトを無効化 */
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; }
+
+    /* 画面全体の背景と基本フォント */
+    body {
+      margin: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      background: radial-gradient(100% 100% at 0% 0%, #0e142a, #0a0d1a 60%), var(--bg);
+      color: var(--text);
+      font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      height: 100svh;      /* iOS のアドレスバー変動対策 */
+      overflow: hidden;     /* 背景のはみ出し防止 */
+      touch-action: manipulation; /* タッチ遅延の回避 */
     }
-    .app{ max-width: 860px; margin: 0 auto; padding: 12px clamp(12px,4vw,20px) 20px;
-      display:flex; flex-direction:column; gap:var(--gap); min-height: 100svh; }
-    header{ display:flex; align-items:center; gap:10px; background: rgba(255,255,255,.03);
-      border:1px solid rgba(255,255,255,.06); border-radius: var(--radius); padding:10px 12px;
-      box-shadow: var(--shadow); backdrop-filter: blur(6px); }
-    header h1{ font-size: clamp(18px, 2.4vw, 22px); margin:0; white-space: nowrap; }
-    .spacer{flex:1}
-    .pill{ background:#0f172a; color:var(--text); border:1px solid rgba(255,255,255,.08);
-      border-radius:999px; padding:6px 10px; font-size:13px; display:flex; align-items:center; gap:6px; }
-    .iconbtn{ border:1px solid rgba(255,255,255,.12); background: var(--btn); color: var(--text);
-      border-radius: 10px; padding:10px 12px; font-size: 16px; cursor:pointer;
-      transition: transform var(--tap), filter var(--tap); touch-action: manipulation; }
-    .iconbtn:active{ transform: scale(.96) }
-    .iconbtn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
 
-    .main-card{ background: var(--card); border:1px solid rgba(255,255,255,.08); border-radius: var(--radius);
-      box-shadow: var(--shadow); padding: clamp(10px,2.2vw,16px); display:flex; flex-direction:column; gap:12px; min-height: 0; }
+    /* アプリの上下レイアウト */
+    .app {
+      height: 100%;
+      display: flex;
+      flex-direction: column; /* 上下並び */
+      gap: 10px;
+      padding: 10px;
+    }
 
-    .hud{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:14px; color: var(--muted); padding: 2px 4px; }
-    .stack{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    /* 上（問題）・下（操作）パネルの見た目 */
+    .top, .bottom {
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0; /* Flex 内で縮められるように */
+    }
+    .top { flex: 1; gap: 8px; }    /* 上側は可変高さ（主領域） */
+    .bottom { gap: 12px; }          /* 下側はボタン群 */
+
+    /* ヘッダ（ステータス表示など） */
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+    h1 { font-size: 16px; margin: 0; color: var(--text); font-weight: 700; }
+    .sub { color: var(--muted); font-size: 12px; }
 
     /* プレイエリア：端末に合わせて高さを調整 */
-    .arena{ position: relative; background: #0f1220; border:1px solid rgba(255,255,255,.08);
-      border-radius: 14px; overflow: hidden; width: 100%; height: clamp(360px, 60svh, 70svh); }
+    .arena{ position: relative; background: radial-gradient(120% 100% at 100% 0%, #0a1530, #091023 60%);
+      border-radius: 12px; overflow: hidden; width: 100%; flex: 1; min-height: 0; }
 
     .overlay-center{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
       background: radial-gradient(transparent 40%, rgba(0,0,0,.35)); pointer-events:none; user-select:none;
@@ -50,85 +90,130 @@
 
     .num{ position:absolute; width:84px; height:84px; min-width:56px; min-height:56px; border-radius: 999px;
       border:1px solid rgba(255,255,255,.12); background:#172033; color:#eef2ff; font-weight:900; font-size: 30px;
-      display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action: manipulation; /* iOS: 300ms遅延回避 */
-      transition: transform var(--tap), background var(--tap), box-shadow var(--tap), filter var(--tap);
+      display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action: manipulation;
+      transition: transform 180ms, background 180ms, box-shadow 180ms, filter 180ms;
       box-shadow: 0 6px 14px rgba(0,0,0,.25); user-select:none; }
     .num:focus-visible{ outline:2px solid var(--accent); outline-offset:3px }
     .num:active{ transform: scale(.94) }
-    .num.correct{ background:#0b3320; border-color:#22c55e; box-shadow: 0 8px 24px rgba(34,197,94,.35); }
-    .num.wrong{ background:#2a0f12; border-color:#ef4444; box-shadow: 0 8px 24px rgba(239,68,68,.35); animation: shake .28s ease-in-out }
+    .num.correct{ background: var(--ok); border-color: var(--ok); box-shadow: 0 8px 24px rgba(76, 217, 100, .35); }
+    .num.wrong{ background: var(--ng); border-color: var(--ng); box-shadow: 0 8px 24px rgba(255, 59, 48, .35); animation: shake .28s ease-in-out }
     @keyframes shake { 0%,100%{ transform: translateX(0) } 20%{ transform: translateX(-6px) } 40%{ transform: translateX(6px) } 60%{ transform: translateX(-4px) } 80%{ transform: translateX(4px) } }
 
-    .footer{ display:flex; align-items:center; gap:10px; flex-wrap: wrap; justify-content: space-between; color: var(--muted); }
-    .ad{ width:100%; min-height:60px; border:1px dashed rgba(255,255,255,.18); border-radius:12px; display:flex; align-items:center; justify-content:center; color:#9aa4b2; background:#0f1322; }
-    .btn{ padding: 14px 16px; border-radius: 12px; border:1px solid rgba(255,255,255,.12); background:#0f172a; color:var(--text); font-weight:700; cursor:pointer; touch-action: manipulation; transition: transform var(--tap), filter var(--tap), background var(--tap); }
-    .btn.primary{ background: linear-gradient(180deg,#2563eb,#1d4ed8); border-color: rgba(255,255,255,.15) }
-    .btn:active{ transform: translateY(1px) scale(.98) }
-    .btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
-    .subtitle{ color: var(--muted); font-size: 14px }
-    .center{ display:flex; justify-content:center; gap:10px; flex-wrap:wrap }
+    /* ステータス用ピル表示 */
+    .hud { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .pill { padding: 6px 10px; border-radius: 999px; background: #14182a; border: 1px solid #2a2f4a; color: var(--muted); font-size: 12px; }
+
+    /* ボタン */
+    .actions { display: flex; gap: 8px; }
+    button.secondary { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid #2d3352; background: #1a1f36; color: var(--text); font-weight: 700; transition: transform 180ms; }
+    button.primary   { flex: 1; padding: 12px; border-radius: 12px; border: 0; background: var(--accent); color: #00121a; font-weight: 900; transition: transform 180ms; }
+    button.secondary:active, button.primary:active { transform: translateY(1px) scale(.98); }
+
+    /* サウンドトグルボタン */
+    .sound-toggle { 
+      appearance: none; border: 1px solid #2d3352; background: var(--btn); color: var(--text);
+      border-radius: 10px; padding: 10px 12px; font-size: 16px; cursor: pointer;
+      transition: transform 180ms, filter 180ms; touch-action: manipulation; 
+    }
+    .sound-toggle:active { transform: scale(.96) }
+    .sound-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+    /* トースト（正解／不正解の一時表示） */
+    .toast { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+    .toast > div { font-size: 40px; font-weight: 900; opacity: 0; transform: translateY(8px) scale(.98); transition: opacity .2s, transform .2s; padding: 8px 16px; border-radius: 12px; }
+    .toast.show > .ok { color: var(--ok); opacity: 1; transform: translateY(0) scale(1); background: rgba(30, 60, 30, .25); }
+    .toast.show > .ng { color: var(--ng); opacity: 1; transform: translateY(0) scale(1); background: rgba(80, 20, 20, .25); }
+
+    /* カウントダウンや結果用の半透明オーバーレイ */
+    .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); border-radius: 12px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .overlay.show { opacity: 1; pointer-events: auto; }
+    .overlay .big { font-size: clamp(40px, 8vw, 84px); font-weight: 900; letter-spacing: .04em; }
+    .overlay .panel { background: #0f1328; border: 1px solid #2a2f4a; padding: 16px 18px; border-radius: 14px; box-shadow: var(--shadow); text-align: center; }
+    .overlay .panel h2 { margin: 0 0 8px; font-size: 18px; }
+    .overlay .panel p  { margin: 4px 0; color: var(--muted); font-size: 14px; }
+
     .hidden{ display:none !important }
+
+    /* モバイル縮小時の余白最適化 */
+    @media (max-width: 800px) {
+      .app { gap: 8px; padding: 8px; }
+      .actions { gap: 6px; }
+      button.secondary, button.primary { padding: 10px; font-size: 14px; }
+    }
   </style>
 </head>
 <body>
   <div class="app" id="app">
-    <header>
-      <h1 aria-label="ゲームタイトル">最大の数字をタップ！</h1>
-      <div class="spacer"></div>
-      <div class="pill" id="bestPill" aria-live="polite" aria-label="ベスト記録表示">Best --/10, --.-s</div>
-      <button class="iconbtn" id="soundToggle" aria-label="サウンドON/OFF" title="サウンドON/OFF">🔊</button>
-    </header>
 
-    <section class="main-card" role="main">
+    <!-- 上：問題パネル（HUD + Arena + オーバーレイ） -->
+    <section class="top" aria-label="問題パネル">
       <div class="hud">
-        <div class="stack"><span id="qIndicator" aria-live="polite">タップで開始できます</span></div>
-        <div class="stack"><span id="liveTime">Time: 0.00s</span><span>｜</span><span id="liveCorrect">Correct: 0</span></div>
+        <div class="pill" id="qIndicator" aria-live="polite">タップで開始できます</div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="pill" id="liveTime">Time: 0.00s</div>
+          <div class="pill" id="liveCorrect">Correct: 0</div>
+          <button class="sound-toggle" id="soundToggle" aria-label="サウンドON/OFF" title="サウンドON/OFF">🔊</button>
+        </div>
       </div>
-
+      
       <div class="arena" id="arena" aria-label="プレイエリア">
         <div class="overlay-center" id="countOverlay"><div class="count-num" id="countText"></div></div>
+        <!-- トースト（正解／不正解の瞬間表示） -->
+        <div class="toast" id="toast">
+          <div class="ok">正解</div>
+          <div class="ng">不正解</div>
+        </div>
+        <!-- カウントダウンや結果ダイアログ用のオーバーレイ -->
+        <div class="overlay" id="overlay"><div class="big" id="overlayText"></div></div>
       </div>
+    </section>
 
+    <!-- 下：操作パネル -->
+    <section class="bottom" aria-label="操作パネル">
       <div id="panel">
         <div id="titlePanel">
-          <h2>ワンタップ反射ゲーム</h2>
-          <p class="subtitle">ランダムに出る1桁の数字から<strong>最大の数字</strong>をタップ。10問連続で<strong>合計タイム</strong>と<strong>正答数</strong>を競います。</p>
-          <div class="center">
-            <button id="startBtn" class="btn primary" aria-label="ゲーム開始">タップしてスタート</button>
-            <button id="howBtn" class="btn" aria-label="遊び方を見る">遊び方</button>
+          <header>
+            <h1>ワンタップ反射ゲーム</h1>
+            <div class="pill" id="bestPill" aria-live="polite" aria-label="ベスト記録表示">Best --/10, --.-s</div>
+          </header>
+          <div class="sub">ランダムに出る1桁の数字から<strong>最大の数字</strong>をタップ。10問連続で<strong>合計タイム</strong>と<strong>正答数</strong>を競います。</div>
+          <div class="actions">
+            <button id="howBtn" class="secondary" aria-label="遊び方を見る">遊び方</button>
+            <button id="startBtn" class="primary" aria-label="ゲーム開始">タップしてスタート</button>
           </div>
         </div>
 
         <div id="howPanel" class="hidden">
-          <h3>遊び方</h3>
-          <ul class="subtitle">
+          <header>
+            <h1>遊び方</h1>
+          </header>
+          <ul class="sub" style="margin: 0; padding-left: 16px;">
             <li>最初にカウントダウン「3,2,1, START!」が1回だけ表示されます。</li>
-            <li>各問題は<strong>3〜6個</strong>の数字（0〜9）がランダム位置に出現します。</li>
+            <li>各問題は<strong>3～6個</strong>の数字（0～9）がランダム位置に出現します。</li>
             <li><strong>最大の数字</strong>を<strong>ボタンをタップ</strong>して選びます。（iPhone/iPad対応）</li>
             <li>10問終了で結果表示。ベストは自動保存され、ヘッダに表示されます。</li>
             <li>サウンドは右上ボタンでON/OFF（設定は保存されます）。</li>
           </ul>
-          <div class="center">
-            <button id="backBtn" class="btn">戻る</button>
-            <button id="startBtn2" class="btn primary">今すぐスタート</button>
+          <div class="actions">
+            <button id="backBtn" class="secondary">戻る</button>
+            <button id="startBtn2" class="primary">今すぐスタート</button>
           </div>
         </div>
 
         <div id="resultPanel" class="hidden" aria-live="polite">
-          <h2>結果</h2>
-          <p id="resultText" style="font-size:18px; margin-top:-6px"></p>
-          <p id="bestText" class="subtitle"></p>
-          <div class="center">
-            <button id="retryBtn" class="btn primary" aria-label="もう一度プレイ">もう一度</button>
-            <button id="toTitleBtn" class="btn" aria-label="タイトルへ戻る">タイトルへ</button>
+          <header>
+            <h1>結果</h1>
+          </header>
+          <p id="resultText" style="font-size:18px; margin: 8px 0; color: var(--text);"></p>
+          <p id="bestText" class="sub" style="margin: 4px 0;"></p>
+          <div class="actions">
+            <button id="toTitleBtn" class="secondary" aria-label="タイトルへ戻る">タイトルへ</button>
+            <button id="retryBtn" class="primary" aria-label="もう一度プレイ">もう一度</button>
           </div>
         </div>
       </div>
     </section>
 
-    <footer class="footer">
-      <small>© <span id="yy"></span> One-Page Mini Games</small>
-    </footer>
   </div>
 
   <script>
@@ -154,8 +239,9 @@
     const toTitleBtn = $('#toTitleBtn');
     const resultText = $('#resultText');
     const bestText = $('#bestText');
-
-    $('#yy').textContent = new Date().getFullYear();
+    const toast = $('#toast');
+    const overlay = $('#overlay');
+    const overlayText = $('#overlayText');
 
     // ---- 乱数（crypto 優先） ----
     function randInt(min, max){
@@ -176,11 +262,11 @@
       if (!audioCtx){ try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ audioCtx = null; } }
       if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     }
-    function beep({freq=440, duration=0.12, type='sine', volume=0.15}={}){
+    function beep({freq=440, duration=0.12, type='sine', volume=0.15, when=0}={}){
       if (!soundOn) return; ensureAudioContext(); if (!audioCtx) return;
       const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
       osc.type = type; osc.frequency.value = freq; gain.gain.value = volume; osc.connect(gain).connect(audioCtx.destination);
-      const now = audioCtx.currentTime; osc.start(now); gain.gain.setValueAtTime(volume, now);
+      const now = audioCtx.currentTime + when; osc.start(now); gain.gain.setValueAtTime(volume, now);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + duration); osc.stop(now + duration + 0.02);
     }
     soundToggle.addEventListener('pointerup', () => { soundOn = !soundOn; localStorage.setItem(SOUND_KEY, String(soundOn)); updateSoundUI(); if (soundOn) beep({freq:880, duration:.08, type:'square', volume:.12}); }, {passive:true});
@@ -200,7 +286,7 @@
 
     function resetHUD(){ qIndicator.textContent = 'タップで開始できます'; liveTime.textContent = 'Time: 0.00s'; liveCorrect.textContent = 'Correct: 0'; }
 
-    function showTitle(){ arena.innerHTML = '<div class="overlay-center" id="countOverlay"><div class="count-num" id="countText"></div></div>';
+    function showTitle(){ arena.innerHTML = '<div class="overlay-center" id="countOverlay"><div class="count-num" id="countText"></div></div><div class="toast" id="toast"><div class="ok">正解</div><div class="ng">不正解</div></div><div class="overlay" id="overlay"><div class="big" id="overlayText"></div></div>';
       resultPanel.classList.add('hidden'); howPanel.classList.add('hidden'); titlePanel.classList.remove('hidden'); resetHUD(); }
     function showHow(){ titlePanel.classList.add('hidden'); howPanel.classList.remove('hidden'); }
     function showResult(correct, ms){ titlePanel.classList.add('hidden'); howPanel.classList.add('hidden'); resultPanel.classList.remove('hidden');
@@ -208,9 +294,29 @@
       updateBestPill(); resultText.textContent = `正答数：${correct} / ${TOTAL_Q}　｜　合計タイム：${fmtTime(ms)}`;
       bestText.textContent = updated ? '🎉 ベスト記録を更新しました！' : `ベスト：${bestOld.correct}/10, ${bestOld.timeMs?fmtTime(bestOld.timeMs):'--.-s'}`; }
 
-    async function countdown(){ countOverlay.style.display = 'flex'; const seq = ['3','2','1','START!'];
-      for (const s of seq){ countText.textContent = s; if (s!=='START!') beep({freq:600,duration:.1,type:'triangle',volume:.12}); else beep({freq:980,duration:.18,type:'square',volume:.15}); await new Promise(r=>setTimeout(r, s==='START!'?700:650)); }
-      countOverlay.style.display = 'none'; }
+    // トーストとオーバーレイ機能
+    function showToast(ok){
+      const toastEl = $('#toast');
+      toastEl.classList.remove('show'); void toastEl.offsetHeight;
+      toastEl.classList.add('show');
+      toastEl.children[0].style.display = ok ? 'block' : 'none';
+      toastEl.children[1].style.display = ok ? 'none' : 'block';
+      setTimeout(()=>toastEl.classList.remove('show'), 650);
+    }
+
+    function showOverlay(text){ 
+      const overlayEl = $('#overlay'); const overlayTextEl = $('#overlayText');
+      overlayTextEl.textContent = text; overlayEl.classList.add('show'); 
+    }
+    function hideOverlay(){ $('#overlay').classList.remove('show'); }
+
+    // 3,2,1,START のカウントダウン（音付き）
+    function countdown3(onDone){
+      showOverlay('3'); beep({freq:480, duration:.06, type:'square', volume:.16});
+      setTimeout(()=>{ showOverlay('2'); beep({freq:480, duration:.06, type:'square', volume:.16}); }, 1000);
+      setTimeout(()=>{ showOverlay('1'); beep({freq:480, duration:.06, type:'square', volume:.16}); }, 2000);
+      setTimeout(()=>{ showOverlay('START'); beep({freq:700, duration:.08, type:'triangle', volume:.20}); beep({freq:1000, duration:.10, type:'triangle', volume:.18, when:.08}); setTimeout(hideOverlay, 350); onDone(); }, 3000);
+    }
 
     function aabbOverlap(a,b,margin=8){ return !((a.x + a.w + margin) <= b.x || (b.x + b.w + margin) <= a.x || (a.y + a.h + margin) <= b.y || (b.y + b.h + margin) <= a.y); }
 
@@ -234,35 +340,50 @@
 
     function registerTap(el, handler){
       let used = false; const wrap = (e)=>{ if (used || lock) return; used = true; handler(e); setTimeout(()=>{ used=false; }, 0); };
-      el.addEventListener('pointerup', wrap, {passive:true}); // iOS/Androidのタップ
-      el.addEventListener('click', wrap, {passive:true});    // フォールバック（PCブラウザなど）
+      el.addEventListener('pointerup', wrap, {passive:true});
+      el.addEventListener('click', wrap, {passive:true});
     }
 
     function renderQuestion(){
       qIndicator.textContent = `問題 ${questionIndex+1} / ${TOTAL_Q}`; liveCorrect.textContent = `Correct: ${correctCount}`;
       const values = makeNumbers(); const maxVal = Math.max(...values);
-      arena.innerHTML = '<div class="overlay-center" id="countOverlay" style="display:none"><div class="count-num" id="countText"></div></div>';
+      arena.innerHTML = '<div class="overlay-center" id="countOverlay" style="display:none"><div class="count-num" id="countText"></div></div><div class="toast" id="toast"><div class="ok">正解</div><div class="ng">不正解</div></div><div class="overlay" id="overlay"><div class="big" id="overlayText"></div></div>';
       const {rects} = layoutButtons(values); buttons = [];
       values.forEach((v,i)=>{ const r = rects[i]; const btn = document.createElement('button');
         btn.className = 'num'; btn.style.left = r.x+'px'; btn.style.top = r.y+'px'; btn.style.width = r.w+'px'; btn.style.height = r.h+'px';
         btn.textContent = String(v); btn.setAttribute('aria-label', `数字 ${v}`); btn.dataset.val = String(v);
         registerTap(btn, () => onTap(btn, v, maxVal)); arena.appendChild(btn); buttons.push(btn); });
-      if (questionIndex === 0){ startTime = performance.now(); tickTime(); }
+      if (questionIndex === 1){ startTime = performance.now(); tickTime(); }
       resizeQueued = false;
     }
 
     function tickTime(){ cancelAnimationFrame(timerRAF); const loop = () => { const now = performance.now(); const elapsed = now - startTime; liveTime.textContent = `Time: ${(elapsed/1000).toFixed(2)}s`; timerRAF = requestAnimationFrame(loop); }; timerRAF = requestAnimationFrame(loop); }
 
     function onTap(btn, value, maxVal){ if (lock) return; const correct = (value === maxVal);
-      if (correct){ btn.classList.add('correct'); beep({freq:900, duration:.1, type:'square', volume:.12}); correctCount++; }
-      else { btn.classList.add('wrong'); beep({freq:250, duration:.12, type:'sawtooth', volume:.12}); }
+      if (correct){ btn.classList.add('correct'); beep({freq:900, duration:.1, type:'square', volume:.12}); correctCount++; showToast(true); }
+      else { btn.classList.add('wrong'); beep({freq:250, duration:.12, type:'sawtooth', volume:.12}); showToast(false); }
       lock = true; setTimeout(()=>{ lock = false; nextQuestion(); }, 240);
     }
 
-    function nextQuestion(){ questionIndex++; if (questionIndex >= TOTAL_Q){ cancelAnimationFrame(timerRAF); const end = performance.now(); const totalMs = end - startTime; showResult(correctCount, totalMs); return; }
-      renderQuestion(); }
+    function nextQuestion(){ 
+      questionIndex++; 
+      if (questionIndex > TOTAL_Q){ 
+        cancelAnimationFrame(timerRAF); 
+        const end = performance.now(); 
+        const totalMs = end - startTime; 
+        showResult(correctCount, totalMs); 
+        return; 
+      }
+      renderQuestion(); 
+    }
 
-    async function startGame(){ questionIndex = 0; correctCount = 0; lock = false; resetHUD(); titlePanel.classList.add('hidden'); howPanel.classList.add('hidden'); resultPanel.classList.add('hidden'); ensureAudioContext(); await countdown(); renderQuestion(); }
+    async function startGame(){ 
+      questionIndex = 0; correctCount = 0; lock = false; resetHUD(); 
+      titlePanel.classList.add('hidden'); howPanel.classList.add('hidden'); resultPanel.classList.add('hidden'); 
+      ensureAudioContext(); 
+      qIndicator.textContent = 'カウントダウン中';
+      countdown3(()=>{ questionIndex = 0; renderQuestion(); }); 
+    }
 
     // ---- イベント（タップ主体） ----
     registerTap(startBtn, startGame);
