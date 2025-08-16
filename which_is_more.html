@@ -1,117 +1,315 @@
+<!--
+A) 仕様の要約
+- 画面は上下 2 分割。
+  - 上：Canvas に左右分割で 1〜10 個の丸を「重ならないように」ランダム配置。
+  - 下：スタート／リトライボタン＋遊び方説明。
+- スタート押下 → 3 秒カウントダウン → 10 ラウンド連続出題。
+- 各ラウンドで左右それぞれに異なる個数（必ず不等）の丸を配置。
+- プレイヤーは左半分 or 右半分をタップして「多いほう」を選択。
+- 10 ラウンド終了後、正答数を表示。
+- iPhone / iPad 対応（viewport、Pointer Events、初回タップで WebAudio 解錠）。
+- 1 ファイル完結。外部 CDN 不使用。GitHub Pages 配備可。
+- デザインは他のゲーム（biggest_number.html, how_many_bolls.html）と統一。
+-->
 <!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>左右比較（丸の数）— Canvas版・単一HTML</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>左右比較（丸の数）</title>
   <style>
-    :root{
-      --bg:#0b0e14; --card:#121826; --text:#eef2ff; --muted:#9aa4b2; --accent:#60a5fa;
-      --ok:#22c55e; --ng:#ef4444; --shadow:0 8px 24px rgba(0,0,0,.28); --radius:16px; --tap:180ms;
+    /* =========================
+       配色や影のトークン
+       ========================= */
+    :root {
+      --bg: #0f1220;
+      --panel: #171a2a;
+      --panel2: #0c1020;
+      --text: #e8ecf1;
+      --muted: #99a3b3;
+      --accent: #5cc8ff;  /* 主要ボタン色 */
+      --ok: #4cd964;      /* 正解色 */
+      --ng: #ff3b30;      /* 不正解色 */
+      --btn: #22263a;
+      --btnActive: #2f3552;
+      --shadow: 0 8px 24px rgba(0,0,0,.35);
     }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Noto Sans JP",Arial,sans-serif;
-      background: radial-gradient(1200px 600px at 10% 0%, #0e1320 0%, #0b0e14 50%, #0b0e14 100%);
-      color:var(--text);
-      -webkit-tap-highlight-color: transparent; -webkit-touch-callout:none;
-      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+
+    /* タップ時の青いハイライトを無効化 */
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; }
+
+    /* 画面全体の背景と基本フォント */
+    body {
+      margin: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      background: radial-gradient(100% 100% at 0% 0%, #0e142a, #0a0d1a 60%), var(--bg);
+      color: var(--text);
+      font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      height: 100svh;      /* iOS のアドレスバー変動対策 */
+      overflow: hidden;     /* 背景のはみ出し防止 */
+      touch-action: manipulation; /* タッチ遅延の回避 */
     }
-    .app{max-width:880px;margin:0 auto;min-height:100svh;display:flex;flex-direction:column;gap:12px;padding:12px 14px 18px}
-    header{
-      background: rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius: var(--radius);
-      padding:10px 12px; display:flex; align-items:center; gap:10px; box-shadow: var(--shadow); backdrop-filter: blur(6px);
+
+    /* アプリの上下レイアウト */
+    .app {
+      height: 100%;
+      display: flex;
+      flex-direction: column; /* 上下並び */
+      gap: 10px;
+      padding: 10px;
     }
-    header h1{font-size: clamp(18px, 2.8vw, 22px); margin:0}
-    .spacer{flex:1}
-    .pill{border:1px solid rgba(255,255,255,.1); border-radius:999px; padding:6px 10px; font-size:13px; color:var(--muted)}
-    .card{
-      background: var(--card); border:1px solid rgba(255,255,255,.08); border-radius: var(--radius);
-      box-shadow: var(--shadow); padding:12px; display:flex; flex-direction:column; gap:10px; min-height: 0;
+
+    /* 上（問題）・下（操作）パネルの見た目 */
+    .top, .bottom {
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0; /* Flex 内で縮められるように */
     }
-    .hud{display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:14px}
-    .controls{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-    .btn{
-      background:#0f172a; color:var(--text); border:1px solid rgba(255,255,255,.12); border-radius:12px;
-      padding:12px 14px; font-weight:700; cursor:pointer; touch-action:manipulation; transition:transform var(--tap), filter var(--tap);
+    .top { flex: 1; gap: 8px; }    /* 上側は可変高さ（主領域） */
+    .bottom { gap: 12px; }          /* 下側はボタン群 */
+
+    /* ヘッダ（ステータス表示など） */
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+    h1 { font-size: 16px; margin: 0; color: var(--text); font-weight: 700; }
+    .sub { color: var(--muted); font-size: 12px; }
+
+    /* ゲームエリア：Canvas を含む */
+    .game-area{ position: relative; background: radial-gradient(120% 100% at 100% 0%, #0a1530, #091023 60%);
+      border-radius: 12px; overflow: hidden; width: 100%; flex: 1; min-height: 0; }
+
+    /* Canvas のスタイル */
+    canvas {
+      width: 100%; height: 100%; display: block; border-radius: 12px;
+      background: #0f1220; touch-action: none; /* iOS：タップ操作の予期せぬスクロール無効 */
     }
-    .btn.primary{background: linear-gradient(180deg,#2563eb,#1d4ed8)}
-    .btn:active{transform: translateY(1px) scale(.98)}
-    canvas{
-      width:100%; height: min(70svh, 70vh); display:block; border-radius:14px; border:1px solid rgba(255,255,255,.08);
-      background:#0f1220; box-shadow: var(--shadow);
-      touch-action: none; /* iOS：タッチ操作の予期せぬスクロール無効 */
+
+    /* ステータス用ピル表示 */
+    .hud { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .pill { padding: 6px 10px; border-radius: 999px; background: #14182a; border: 1px solid #2a2f4a; color: var(--muted); font-size: 12px; }
+
+    /* ボタン */
+    .actions { display: flex; gap: 8px; }
+    button.secondary { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid #2d3352; background: #1a1f36; color: var(--text); font-weight: 700; transition: transform 180ms; }
+    button.primary   { flex: 1; padding: 12px; border-radius: 12px; border: 0; background: var(--accent); color: #00121a; font-weight: 900; transition: transform 180ms; }
+    button.secondary:active, button.primary:active { transform: translateY(1px) scale(.98); }
+    button:disabled { opacity: 0.5; filter: grayscale(30%); }
+
+    /* トースト（正解／不正解の一時表示） */
+    .toast { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 10; }
+    .toast > div { font-size: 40px; font-weight: 900; opacity: 0; transform: translateY(8px) scale(.98); transition: opacity .2s, transform .2s; padding: 8px 16px; border-radius: 12px; }
+    .toast.show > .ok { color: var(--ok); opacity: 1; transform: translateY(0) scale(1); background: rgba(30, 60, 30, .25); }
+    .toast.show > .ng { color: var(--ng); opacity: 1; transform: translateY(0) scale(1); background: rgba(80, 20, 20, .25); }
+
+    /* カウントダウンや結果用の半透明オーバーレイ */
+    .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); border-radius: 12px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
+    .overlay.show { opacity: 1; pointer-events: auto; }
+    .overlay .big { font-size: clamp(40px, 8vw, 84px); font-weight: 900; letter-spacing: .04em; }
+    .overlay .panel { background: #0f1328; border: 1px solid #2a2f4a; padding: 16px 18px; border-radius: 14px; box-shadow: var(--shadow); text-align: center; }
+    .overlay .panel h2 { margin: 0 0 8px; font-size: 18px; }
+    .overlay .panel p  { margin: 4px 0; color: var(--muted); font-size: 14px; }
+
+    .hidden{ display:none !important }
+
+    /* モバイル縮小時の余白最適化 */
+    @media (max-width: 800px) {
+      .app { gap: 8px; padding: 8px; }
+      .actions { gap: 6px; }
+      button.secondary, button.primary { padding: 10px; font-size: 14px; }
     }
-    .hint{color:var(--muted); font-size:13px}
-    .center{display:flex; justify-content:center; gap:10px; flex-wrap:wrap}
-    .toast{
-      position:absolute; left:50%; top:12px; transform:translateX(-50%);
-      background: rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.08); border-radius:999px;
-      padding:6px 10px; font-size:13px; color:var(--text); backdrop-filter: blur(4px);
-    }
-    .hidden{display:none!important}
   </style>
 </head>
 <body>
-  <div class="app">
-    <header>
-      <h1>左右比較（丸の数）</h1>
-      <div class="spacer"></div>
-      <div class="pill" id="best">Best: --/10</div>
-    </header>
+  <div class="app" id="app">
 
-    <div class="card">
+    <!-- 上：問題パネル（HUD + Canvas + オーバーレイ） -->
+    <section class="top" aria-label="問題パネル">
       <div class="hud">
-        <div>Round: <span id="round">0</span> / 10</div>
-        <div>Score: <span id="score">0</span></div>
+        <div class="pill" id="qIndicator" aria-live="polite">タップで開始できます</div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="pill" id="roundDisplay">Round: 0/10</div>
+          <div class="pill" id="scoreDisplay">Score: 0</div>
+        </div>
       </div>
-
-      <div style="position:relative">
+      
+      <div class="game-area" id="gameArea" aria-label="ゲームエリア">
+        <!-- メインのCanvas（丸の描画用） -->
         <canvas id="game" aria-label="左右に描かれた丸の数が多いほうをタップしてください"></canvas>
-        <div id="toast" class="toast hidden" aria-live="polite"></div>
+        <!-- トースト（正解／不正解の瞬間表示） -->
+        <div class="toast" id="toast">
+          <div class="ok">正解！</div>
+          <div class="ng">はずれ…</div>
+        </div>
+        <!-- カウントダウンや結果ダイアログ用のオーバーレイ -->
+        <div class="overlay" id="overlay"><div class="big" id="overlayText"></div></div>
       </div>
+    </section>
 
-      <div class="controls center">
-        <button id="start" class="btn primary" aria-label="タップして開始">タップして開始</button>
-        <button id="again" class="btn hidden" aria-label="もう一度遊ぶ">もう一度</button>
+    <!-- 下：操作パネル -->
+    <section class="bottom" aria-label="操作パネル">
+      <div id="panel">
+        <div id="titlePanel">
+          <header>
+            <h1>左右比較（丸の数）</h1>
+            <div class="pill" id="bestPill" aria-live="polite" aria-label="ベスト記録表示">Best: --/10</div>
+          </header>
+          <div class="sub">左半分 or 右半分をタップ（iPhone/iPad対応）。各ラウンドは1～10個の丸を左右に描画（重なりなし）。どちらが多いかを選んでください。</div>
+          <div class="actions">
+            <button id="howBtn" class="secondary" aria-label="遊び方を見る">遊び方</button>
+            <button id="startBtn" class="primary" aria-label="ゲーム開始">タップして開始</button>
+          </div>
+        </div>
+
+        <div id="howPanel" class="hidden">
+          <header>
+            <h1>遊び方</h1>
+          </header>
+          <ul class="sub" style="margin: 0; padding-left: 16px;">
+            <li>最初にカウントダウン「3,2,1, START!」が1回だけ表示されます。</li>
+            <li>画面が左右に分割され、それぞれに<strong>1～10個</strong>の丸がランダム配置されます。</li>
+            <li><strong>丸の数が多いほう</strong>の画面半分を<strong>タップ</strong>して選択します。</li>
+            <li>10ラウンド終了で結果表示。ベストは自動保存され、ヘッダに表示されます。</li>
+            <li>丸は重ならないよう配置され、左右で必ず異なる個数になります。</li>
+          </ul>
+          <div class="actions">
+            <button id="backBtn" class="secondary">戻る</button>
+            <button id="startBtn2" class="primary">今すぐスタート</button>
+          </div>
+        </div>
+
+        <div id="resultPanel" class="hidden" aria-live="polite">
+          <header>
+            <h1>結果</h1>
+          </header>
+          <p id="resultText" style="font-size:18px; margin: 8px 0; color: var(--text);"></p>
+          <p id="bestText" class="sub" style="margin: 4px 0;"></p>
+          <div class="actions">
+            <button id="toTitleBtn" class="secondary" aria-label="タイトルへ戻る">タイトルへ</button>
+            <button id="retryBtn" class="primary" aria-label="もう一度プレイ">もう一度</button>
+          </div>
+        </div>
       </div>
-      <p class="hint">操作：左半分 or 右半分をタップ（iPhone/iPad対応）。各ラウンドは1〜10個の丸を左右に描画（重なりなし）。どちらが多いかを選んでください。</p>
-    </div>
+    </section>
+
   </div>
 
   <script>
-  (() => {
-    const ROUNDS = 10;
-    const MIN_COUNT = 1, MAX_COUNT = 10;
-    const MARGIN = 6; // 円同士の最小間隔（px）
-    const PAD = 10;   // 側面や上下の余白（px）
+  (function(){
+    'use strict';
 
-    const canvas = document.getElementById('game');
+    /* ==========================================================
+       定数とゲーム設定
+       ========================================================== */
+    const ROUNDS = 10;            // 総ラウンド数
+    const MIN_COUNT = 1;          // 最小丸数
+    const MAX_COUNT = 10;         // 最大丸数
+    const MARGIN = 6;             // 円同士の最小間隔（px）
+    const PAD = 10;               // 側面や上下の余白（px）
+
+    /* ==========================================================
+       ユーティリティ：DOM ショートカットと乱数、距離計算
+       ========================================================== */
+    const $ = (q, el=document) => el.querySelector(q);
+    const rand = (min, max) => Math.random() * (max - min) + min;
+    const randInt = (min, max) => Math.floor(rand(min, max + 1));
+    const dist2 = (a, b) => { const dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy; };
+
+    /* ==========================================================
+       効果音（WebAudio）：初回タップで解錠 → 簡易ビープ合成
+       ========================================================== */
+    let audioCtx = null;
+    let audioUnlocked = false;
+
+    function ensureAudio(){
+      if (audioUnlocked) return;
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint:'interactive' });
+      if (audioCtx.state !== 'running') audioCtx.resume();
+      audioUnlocked = true;
+    }
+
+    function beep({ freq=440, dur=0.08, type='sine', gain=0.2, when=0, endGain=0.0001 }){
+      if (!audioUnlocked) return;
+      const t0 = audioCtx.currentTime + when;
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(gain, t0);
+      g.gain.exponentialRampToValueAtTime(endGain, t0 + dur);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t0); o.stop(t0 + dur + 0.02);
+    }
+
+    // 用途別の効果音
+    const sfxTap = () => beep({ freq:280, dur:0.05, type:'triangle', gain:0.15 });
+    const sfxOk  = () => { beep({ freq:520, dur:0.07, type:'sine', gain:0.18 }); beep({ freq:820, dur:0.07, type:'sine', gain:0.16, when:0.06 }); };
+    const sfxNg  = () => { beep({ freq:180, dur:0.11, type:'square', gain:0.18 }); beep({ freq:140, dur:0.12, type:'square', gain:0.16, when:0.06 }); };
+    const sfxTick= () => beep({ freq:480, dur:0.06, type:'square', gain:0.16 });
+    const sfxGo  = () => { beep({ freq:700, dur:0.08, type:'triangle', gain:0.20 }); beep({ freq:1000, dur:0.10, type:'triangle', gain:0.18, when:0.08 }); };
+
+    // 初回タップで解錠
+    const unlock = () => { ensureAudio(); document.removeEventListener('pointerdown', unlock, true); };
+    document.addEventListener('pointerdown', unlock, true);
+
+    /* ==========================================================
+       要素参照のキャッシュ
+       ========================================================== */
+    const canvas = $('#game');
     const ctx = canvas.getContext('2d');
-    const startBtn = document.getElementById('start');
-    const againBtn = document.getElementById('again');
-    const roundEl = document.getElementById('round');
-    const scoreEl = document.getElementById('score');
-    const toast = document.getElementById('toast');
-    const bestEl = document.getElementById('best');
+    const qIndicator = $('#qIndicator');
+    const roundDisplay = $('#roundDisplay');
+    const scoreDisplay = $('#scoreDisplay');
+    const bestPill = $('#bestPill');
+    const toast = $('#toast');
+    const overlay = $('#overlay');
+    const overlayText = $('#overlayText');
 
-    let dpr = Math.max(1, window.devicePixelRatio || 1);
-    let W = 0, H = 0;
-    let round = 0, score = 0, best = Number(localStorage.getItem('cmp_best') || 0);
-    let state = 'idle'; // 'idle' | 'playing' | 'ended'
-    let leftCircles = [], rightCircles = [];
-    let leftCount = 0, rightCount = 0;
-    let roundLocked = false; // 1ラウンド内の多重入力防止
+    const titlePanel = $('#titlePanel');
+    const howPanel = $('#howPanel');
+    const resultPanel = $('#resultPanel');
+    const startBtn = $('#startBtn');
+    const startBtn2 = $('#startBtn2');
+    const howBtn = $('#howBtn');
+    const backBtn = $('#backBtn');
+    const retryBtn = $('#retryBtn');
+    const toTitleBtn = $('#toTitleBtn');
+    const resultText = $('#resultText');
+    const bestText = $('#bestText');
 
-    bestEl.textContent = `Best: ${best ? Math.min(best, ROUNDS) : '--'}/${ROUNDS}`;
+    /* ==========================================================
+       ゲーム状態の管理
+       ========================================================== */
+    let dpr = Math.max(1, window.devicePixelRatio || 1);  // デバイスピクセル比
+    let W = 0, H = 0;                                     // Canvas の実ピクセルサイズ
+    let round = 0;                                        // 現在のラウンド（1～10）
+    let score = 0;                                        // 現在のスコア
+    let best = Number(localStorage.getItem('cmp_best') || 0); // ベストスコア
+    let state = 'idle';                                   // 'idle' | 'playing' | 'ended'
+    let leftCircles = [];                                 // 左側の丸配列
+    let rightCircles = [];                                // 右側の丸配列
+    let leftCount = 0;                                    // 左側の丸数
+    let rightCount = 0;                                   // 右側の丸数
+    let roundLocked = false;                              // 1ラウンド内の多重入力防止
 
+    /* ==========================================================
+       ベスト記録の管理
+       ========================================================== */
+    function updateBestPill(){ 
+      bestPill.textContent = best ? `Best: ${Math.min(best, ROUNDS)}/${ROUNDS}` : `Best: --/${ROUNDS}`; 
+    }
+    updateBestPill();
+
+    /* ==========================================================
+       Canvas のリサイズ対応（高DPI対応）
+       ========================================================== */
     function resizeCanvas(){
-      // CSSサイズに合わせて内部ピクセルを調整（高DPI対応）
       const rect = canvas.getBoundingClientRect();
       W = Math.max(320, Math.floor(rect.width * dpr));
       H = Math.max(320, Math.floor(rect.height * dpr));
-      canvas.width = W; canvas.height = H;
+      canvas.width = W; 
+      canvas.height = H;
       ctx.setTransform(1,0,0,1,0,0);
       ctx.scale(dpr, dpr);
       draw();
@@ -119,137 +317,235 @@
     window.addEventListener('resize', resizeCanvas, {passive:true});
     window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200), {passive:true});
 
-    function rand(min, max){ return Math.random() * (max - min) + min; }
-    function randi(min, max){ return Math.floor(rand(min, max + 1)); }
-    function dist2(a,b){ const dx = a.x-b.x, dy = a.y-b.y; return dx*dx + dy*dy; }
-
+    /* ==========================================================
+       円の非重複配置ロジック
+       ========================================================== */
     function generateSide(sideRect, count){
       // 半分の領域内に円を重なりなく配置。失敗時は半径を縮めて再試行。
       const {x, y, w, h} = sideRect;
       let r = Math.max(10, Math.min(w, h) / 18); // 初期半径
       const maxTries = 6;
-      for (let attempt=0; attempt<maxTries; attempt++){
+      
+      for (let attempt = 0; attempt < maxTries; attempt++){
         const circles = [];
         let ok = true;
-        for (let i=0;i<count;i++){
+        
+        for (let i = 0; i < count; i++){
           let placed = false;
-          for (let t=0;t<400;t++){
-            const cx = randi(x + PAD + r, x + w - PAD - r);
-            const cy = randi(y + PAD + r, y + h - PAD - r);
-            const c = {x:cx, y:cy, r};
-            if (circles.every(p => dist2(p,c) >= (p.r + c.r + MARGIN) ** 2)){
-              circles.push(c); placed = true; break;
+          for (let t = 0; t < 400; t++){
+            const cx = randInt(x + PAD + r, x + w - PAD - r);
+            const cy = randInt(y + PAD + r, y + h - PAD - r);
+            const c = {x: cx, y: cy, r};
+            
+            if (circles.every(p => dist2(p, c) >= (p.r + c.r + MARGIN) ** 2)){
+              circles.push(c); 
+              placed = true; 
+              break;
             }
           }
           if (!placed){ ok = false; break; }
         }
+        
         if (ok) return circles;
         r = Math.max(8, r * 0.88); // 失敗したら少し半径を縮める
       }
-      // 最後の手段：簡易グリッド
+      
+      // 最後の手段：簡易グリッド配置
       const cols = Math.ceil(Math.sqrt(count));
       const rows = Math.ceil(count / cols);
       const gw = w / cols, gh = h / rows;
       const rr = Math.max(8, Math.min(gw, gh) * 0.28);
       const circles = [];
-      for (let i=0;i<count;i++){
-        const rIdx = Math.floor(i/cols), cIdx = i % cols;
-        const cx = Math.round(x + cIdx*gw + gw/2 + randi(-Math.min(12,gw*0.2), Math.min(12,gw*0.2)));
-        const cy = Math.round(y + rIdx*gh + gh/2 + randi(-Math.min(12,gh*0.2), Math.min(12,gh*0.2)));
-        circles.push({x:cx, y:cy, r:rr});
+      
+      for (let i = 0; i < count; i++){
+        const rIdx = Math.floor(i / cols), cIdx = i % cols;
+        const cx = Math.round(x + cIdx * gw + gw / 2 + randInt(-Math.min(12, gw * 0.2), Math.min(12, gw * 0.2)));
+        const cy = Math.round(y + rIdx * gh + gh / 2 + randInt(-Math.min(12, gh * 0.2), Math.min(12, gh * 0.2)));
+        circles.push({x: cx, y: cy, r: rr});
       }
       return circles;
     }
 
+    /* ==========================================================
+       新しいラウンドの生成
+       ========================================================== */
     function newRound(){
       roundLocked = false; // 入力ロック解除
       round++;
-      if (round > ROUNDS){ endGame(); return; }
+      
+      if (round > ROUNDS){ 
+        endGame(); 
+        return; 
+      }
 
-      // 左右の個数（1〜10）で、必ず不等に
+      // 左右の個数（1～10）で、必ず不等に
       do {
-        leftCount = randi(MIN_COUNT, MAX_COUNT);
-        rightCount = randi(MIN_COUNT, MAX_COUNT);
+        leftCount = randInt(MIN_COUNT, MAX_COUNT);
+        rightCount = randInt(MIN_COUNT, MAX_COUNT);
       } while (leftCount === rightCount);
 
-      // 領域
-      const halfW = Math.floor(W/dpr/2), fullH = Math.floor(H/dpr);
-      const leftRect  = {x:0,         y:0, w:halfW, h:fullH};
-      const rightRect = {x:halfW + 0, y:0, w:halfW, h:fullH};
+      // 領域分割
+      const halfW = Math.floor(W / dpr / 2);
+      const fullH = Math.floor(H / dpr);
+      const leftRect = {x: 0, y: 0, w: halfW, h: fullH};
+      const rightRect = {x: halfW, y: 0, w: halfW, h: fullH};
 
-      leftCircles  = generateSide(leftRect, leftCount);
+      // 円の配置
+      leftCircles = generateSide(leftRect, leftCount);
       rightCircles = generateSide(rightRect, rightCount);
 
-      roundEl.textContent = round;
+      // UI更新
+      roundDisplay.textContent = `Round: ${round}/${ROUNDS}`;
+      qIndicator.textContent = `ラウンド ${round}/${ROUNDS}`;
       draw();
     }
 
+    /* ==========================================================
+       UI制御：パネル表示切り替え
+       ========================================================== */
+    function showTitle(){ 
+      state = 'idle';
+      resultPanel.classList.add('hidden'); 
+      howPanel.classList.add('hidden'); 
+      titlePanel.classList.remove('hidden'); 
+      qIndicator.textContent = 'タップで開始できます';
+      roundDisplay.textContent = 'Round: 0/10';
+      scoreDisplay.textContent = 'Score: 0';
+      draw();
+    }
+
+    function showHow(){ 
+      titlePanel.classList.add('hidden'); 
+      howPanel.classList.remove('hidden'); 
+    }
+
+    function showResult(finalScore){ 
+      titlePanel.classList.add('hidden'); 
+      howPanel.classList.add('hidden'); 
+      resultPanel.classList.remove('hidden');
+      
+      // ベスト記録の更新判定
+      let updated = false;
+      if (finalScore > best){
+        best = finalScore;
+        localStorage.setItem('cmp_best', String(best));
+        updateBestPill();
+        updated = true;
+      }
+      
+      resultText.textContent = `正答数：${finalScore} / ${ROUNDS}`;
+      bestText.textContent = updated ? '🎉 ベスト記録を更新しました！' : `ベスト：${best}/${ROUNDS}`;
+    }
+
+    /* ==========================================================
+       トーストとオーバーレイ機能
+       ========================================================== */
+    function showToast(ok){
+      toast.classList.remove('show'); 
+      void toast.offsetHeight;
+      toast.classList.add('show');
+      toast.children[0].style.display = ok ? 'block' : 'none';
+      toast.children[1].style.display = ok ? 'none' : 'block';
+      setTimeout(() => toast.classList.remove('show'), 650);
+    }
+
+    function showOverlay(text){ 
+      overlayText.textContent = text; 
+      overlay.classList.add('show'); 
+    }
+
+    function hideOverlay(){ 
+      overlay.classList.remove('show'); 
+    }
+
+    /* ==========================================================
+       カウントダウン機能（3,2,1,START）
+       ========================================================== */
+    function countdown3(onDone){
+      showOverlay('3'); sfxTick();
+      setTimeout(() => { showOverlay('2'); sfxTick(); }, 1000);
+      setTimeout(() => { showOverlay('1'); sfxTick(); }, 2000);
+      setTimeout(() => { showOverlay('START'); sfxGo(); setTimeout(hideOverlay, 350); onDone(); }, 3000);
+    }
+
+    /* ==========================================================
+       ゲーム制御
+       ========================================================== */
     function startGame(){
-      state = 'playing'; round = 0; score = 0; roundLocked = false;
-      scoreEl.textContent = score;
-      startBtn.classList.add('hidden');
-      againBtn.classList.add('hidden');
-      hideToast();
-      newRound();
+      ensureAudio(); sfxTap();
+      state = 'playing'; 
+      round = 0; 
+      score = 0; 
+      roundLocked = false;
+      scoreDisplay.textContent = score;
+      titlePanel.classList.add('hidden');
+      howPanel.classList.add('hidden');
+      resultPanel.classList.add('hidden');
+      qIndicator.textContent = 'カウントダウン中';
+      countdown3(() => { newRound(); });
     }
 
     function endGame(){
       state = 'ended';
       const finalScore = Math.min(score, ROUNDS);
-      showToast(`結果：${finalScore}/${ROUNDS}`, 1600);
-      againBtn.classList.remove('hidden');
-      // ベスト更新
-      if (finalScore > best){
-        best = finalScore;
-        localStorage.setItem('cmp_best', String(best));
-        bestEl.textContent = `Best: ${best}/${ROUNDS}`;
-      }
+      qIndicator.textContent = '結果';
+      showResult(finalScore);
     }
 
+    /* ==========================================================
+       Canvas描画
+       ========================================================== */
     function draw(){
-      const w = Math.floor(W/dpr), h = Math.floor(H/dpr);
-      ctx.clearRect(0,0,w,h);
+      const w = Math.floor(W / dpr);
+      const h = Math.floor(H / dpr);
+      ctx.clearRect(0, 0, w, h);
 
       // 背景
       ctx.fillStyle = '#0f1220';
-      ctx.fillRect(0,0,w,h);
+      ctx.fillRect(0, 0, w, h);
 
       // 中央の仕切り
       ctx.strokeStyle = 'rgba(255,255,255,.12)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h);
+      ctx.moveTo(w / 2, 0); 
+      ctx.lineTo(w / 2, h);
       ctx.stroke();
 
-      // 左右の円を描画
-      drawCircles(leftCircles, '#60a5fa');
-      drawCircles(rightCircles, '#f59e0b');
+      if (state === 'playing'){
+        // 左右の円を描画
+        drawCircles(leftCircles, '#60a5fa');  // 青色
+        drawCircles(rightCircles, '#f59e0b'); // オレンジ色
 
-      // ラベル
-      ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillStyle = 'rgba(255,255,255,.6)';
-      ctx.fillText(`左: ${leftCount}`, w*0.25, 8);
-      ctx.fillText(`右: ${rightCount}`, w*0.75, 8);
-
-      if (state !== 'playing'){
+        // ラベル
+        ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.textAlign = 'center'; 
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = 'rgba(255,255,255,.6)';
+        ctx.fillText(`左: ${leftCount}`, w * 0.25, 8);
+        ctx.fillText(`右: ${rightCount}`, w * 0.75, 8);
+      } else {
+        // 待機状態のオーバーレイ
         ctx.fillStyle = 'rgba(0,0,0,.3)';
-        ctx.fillRect(0,0,w,h);
+        ctx.fillRect(0, 0, w, h);
         ctx.fillStyle = '#eef2ff';
         ctx.font = '800 24px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-        ctx.fillText('タップで開始', w/2, h/2 - 10);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('タップで開始', w / 2, h / 2);
       }
     }
 
     function drawCircles(list, color){
-      const g = ctx.createLinearGradient(0,0,0,H/dpr);
-      // ほんのり立体感
+      // ほんのり立体感のあるグラデーション
+      const g = ctx.createLinearGradient(0, 0, 0, H / dpr);
       g.addColorStop(0, color);
       g.addColorStop(1, shade(color, -0.2));
       ctx.fillStyle = g;
-      list.forEach(c=>{
+      
+      list.forEach(c => {
         ctx.beginPath();
-        ctx.arc(c.x, c.y, c.r, 0, Math.PI*2);
+        ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
         ctx.fill();
         // エッジ
         ctx.strokeStyle = 'rgba(255,255,255,.1)';
@@ -260,70 +556,120 @@
 
     function shade(hex, p){
       // hex like #RRGGBB, p in [-1,1]
-      const n = parseInt(hex.slice(1),16);
-      let r=(n>>16)&255,g=(n>>8)&255,b=n&255;
-      r=Math.round(r+(p<0? r*p : (255-r)*p));
-      g=Math.round(g+(p<0? g*p : (255-g)*p));
-      b=Math.round(b+(p<0? b*p : (255-b)*p));
+      const n = parseInt(hex.slice(1), 16);
+      let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+      r = Math.round(r + (p < 0 ? r * p : (255 - r) * p));
+      g = Math.round(g + (p < 0 ? g * p : (255 - g) * p));
+      b = Math.round(b + (p < 0 ? b * p : (255 - b) * p));
       return `rgb(${r},${g},${b})`;
     }
 
+    /* ==========================================================
+       タッチ/クリック処理：画面のどちら側がタップされたかを判定
+       ========================================================== */
     function handlePick(clientX){
-      if (state!== 'playing') { startGame(); return; }
+      if (state !== 'playing') { 
+        startGame(); 
+        return; 
+      }
       if (roundLocked) return; // 多重入力防止
+      
+      ensureAudio(); sfxTap();
       roundLocked = true;
 
       const rect = canvas.getBoundingClientRect();
       const x = clientX - rect.left;
-      const pickLeft = x < rect.width/2;
+      const pickLeft = x < rect.width / 2;
       const correct = (leftCount > rightCount && pickLeft) || (rightCount > leftCount && !pickLeft);
 
+      // 選択した側にフラッシュエフェクトを表示
       flashSide(pickLeft, correct);
+      
       if (correct){
-        score++; scoreEl.textContent = score;
-        showToast('正解！', 500);
+        sfxOk();
+        score++; 
+        scoreDisplay.textContent = `Score: ${score}`;
+        showToast(true);
       } else {
-        showToast('はずれ…', 500);
+        sfxNg();
+        showToast(false);
       }
-      setTimeout(newRound, 280);
+      
+      // 少し待ってから次のラウンドへ
+      setTimeout(() => {
+        if (state === 'playing') newRound();
+      }, 680);
     }
 
+    /* ==========================================================
+       サイド選択時のフラッシュエフェクト
+       ========================================================== */
     function flashSide(isLeft, ok){
-      const w = Math.floor(W/dpr), h = Math.floor(H/dpr);
-      const x1 = isLeft ? 0 : w/2, x2 = isLeft ? w/2 : w;
+      const w = Math.floor(W / dpr);
+      const h = Math.floor(H / dpr);
+      const x1 = isLeft ? 0 : w / 2;
+      const x2 = isLeft ? w / 2 : w;
+      
       ctx.save();
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = ok ? '#22c55e' : '#ef4444';
-      ctx.fillRect(x1, 0, x2-x1, h);
+      ctx.fillRect(x1, 0, x2 - x1, h);
       ctx.restore();
     }
 
-    // タップ/クリック（pointer優先。未対応環境はclickへフォールバック）
+    /* ==========================================================
+       イベント登録：タッチ/クリック対応
+       ========================================================== */
     function setupPointer(){
       const usePointer = 'onpointerup' in window;
+      
       if (usePointer){
-        canvas.addEventListener('pointerup', (e)=>{ e.preventDefault(); handlePick(e.clientX); }, {passive:false});
-        startBtn.addEventListener('pointerup', (e)=>{ e.preventDefault(); startGame(); }, {passive:false});
-        againBtn.addEventListener('pointerup', (e)=>{ e.preventDefault(); startGame(); }, {passive:false});
+        canvas.addEventListener('pointerup', (e) => { 
+          e.preventDefault(); 
+          handlePick(e.clientX); 
+        }, {passive: false});
       } else {
-        canvas.addEventListener('click', (e)=> handlePick(e.clientX));
-        startBtn.addEventListener('click', startGame);
-        againBtn.addEventListener('click', startGame);
+        canvas.addEventListener('click', (e) => handlePick(e.clientX));
       }
     }
 
-    function showToast(text, ms=800){
-      toast.textContent = text;
-      toast.classList.remove('hidden');
-      clearTimeout(showToast._t);
-      showToast._t = setTimeout(()=>toast.classList.add('hidden'), ms);
+    function registerTap(el, handler){
+      let used = false; 
+      const wrap = (e) => { 
+        if (used) return; 
+        used = true; 
+        handler(e); 
+        setTimeout(() => { used = false; }, 0); 
+      };
+      el.addEventListener('pointerup', wrap, {passive: true});
+      el.addEventListener('click', wrap, {passive: true});
     }
-    function hideToast(){ toast.classList.add('hidden'); }
 
-    // 初期化
-    setupPointer();
-    resizeCanvas();
-    draw();
+    /* ==========================================================
+       初期化とイベント登録
+       ========================================================== */
+    function init(){
+      // ボタンイベントの登録
+      registerTap(startBtn, startGame);
+      if (startBtn2) registerTap(startBtn2, startGame);
+      registerTap(howBtn, () => { ensureAudio(); sfxTap(); showHow(); });
+      registerTap(backBtn, () => { ensureAudio(); sfxTap(); showTitle(); });
+      registerTap(retryBtn, startGame);
+      registerTap(toTitleBtn, () => { ensureAudio(); sfxTap(); showTitle(); });
+
+      // Canvas のポインタイベント設定
+      setupPointer();
+      
+      // Canvas のサイズ調整
+      resizeCanvas();
+      
+      // 初期画面表示
+      showTitle();
+    }
+
+    // アプリケーション開始
+    init();
+
   })();
   </script>
 </body>
