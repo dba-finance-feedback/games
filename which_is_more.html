@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>左右比較（丸の数）— Canvas版・単一HTML</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <style>
+    :root{
+      --bg:#0b0e14; --card:#121826; --text:#eef2ff; --muted:#9aa4b2; --accent:#60a5fa;
+      --ok:#22c55e; --ng:#ef4444; --shadow:0 8px 24px rgba(0,0,0,.28); --radius:16px; --tap:180ms;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Noto Sans JP",Arial,sans-serif;
+      background: radial-gradient(1200px 600px at 10% 0%, #0e1320 0%, #0b0e14 50%, #0b0e14 100%);
+      color:var(--text);
+      -webkit-tap-highlight-color: transparent; -webkit-touch-callout:none;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    .app{max-width:880px;margin:0 auto;min-height:100svh;display:flex;flex-direction:column;gap:12px;padding:12px 14px 18px}
+    header{
+      background: rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius: var(--radius);
+      padding:10px 12px; display:flex; align-items:center; gap:10px; box-shadow: var(--shadow); backdrop-filter: blur(6px);
+    }
+    header h1{font-size: clamp(18px, 2.8vw, 22px); margin:0}
+    .spacer{flex:1}
+    .pill{border:1px solid rgba(255,255,255,.1); border-radius:999px; padding:6px 10px; font-size:13px; color:var(--muted)}
+    .card{
+      background: var(--card); border:1px solid rgba(255,255,255,.08); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding:12px; display:flex; flex-direction:column; gap:10px; min-height: 0;
+    }
+    .hud{display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:14px}
+    .controls{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .btn{
+      background:#0f172a; color:var(--text); border:1px solid rgba(255,255,255,.12); border-radius:12px;
+      padding:12px 14px; font-weight:700; cursor:pointer; touch-action:manipulation; transition:transform var(--tap), filter var(--tap);
+    }
+    .btn.primary{background: linear-gradient(180deg,#2563eb,#1d4ed8)}
+    .btn:active{transform: translateY(1px) scale(.98)}
+    canvas{
+      width:100%; height: min(70svh, 70vh); display:block; border-radius:14px; border:1px solid rgba(255,255,255,.08);
+      background:#0f1220; box-shadow: var(--shadow);
+      touch-action: none; /* iOS：タッチ操作の予期せぬスクロール無効 */
+    }
+    .hint{color:var(--muted); font-size:13px}
+    .center{display:flex; justify-content:center; gap:10px; flex-wrap:wrap}
+    .toast{
+      position:absolute; left:50%; top:12px; transform:translateX(-50%);
+      background: rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.08); border-radius:999px;
+      padding:6px 10px; font-size:13px; color:var(--text); backdrop-filter: blur(4px);
+    }
+    .hidden{display:none!important}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>左右比較（丸の数）</h1>
+      <div class="spacer"></div>
+      <div class="pill" id="best">Best: --/10</div>
+    </header>
+
+    <div class="card">
+      <div class="hud">
+        <div>Round: <span id="round">0</span> / 10</div>
+        <div>Score: <span id="score">0</span></div>
+      </div>
+
+      <div style="position:relative">
+        <canvas id="game" aria-label="左右に描かれた丸の数が多いほうをタップしてください"></canvas>
+        <div id="toast" class="toast hidden" aria-live="polite"></div>
+      </div>
+
+      <div class="controls center">
+        <button id="start" class="btn primary" aria-label="タップして開始">タップして開始</button>
+        <button id="again" class="btn hidden" aria-label="もう一度遊ぶ">もう一度</button>
+      </div>
+      <p class="hint">操作：左半分 or 右半分をタップ（iPhone/iPad対応）。各ラウンドは1〜10個の丸を左右に描画（重なりなし）。どちらが多いかを選んでください。</p>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    const ROUNDS = 10;
+    const MIN_COUNT = 1, MAX_COUNT = 10;
+    const MARGIN = 6; // 円同士の最小間隔（px）
+    const PAD = 10;   // 側面や上下の余白（px）
+
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('start');
+    const againBtn = document.getElementById('again');
+    const roundEl = document.getElementById('round');
+    const scoreEl = document.getElementById('score');
+    const toast = document.getElementById('toast');
+    const bestEl = document.getElementById('best');
+
+    let dpr = Math.max(1, window.devicePixelRatio || 1);
+    let W = 0, H = 0;
+    let round = 0, score = 0, best = Number(localStorage.getItem('cmp_best') || 0);
+    let state = 'idle'; // 'idle' | 'playing' | 'ended'
+    let leftCircles = [], rightCircles = [];
+    let leftCount = 0, rightCount = 0;
+    let roundLocked = false; // 1ラウンド内の多重入力防止
+
+    bestEl.textContent = `Best: ${best ? Math.min(best, ROUNDS) : '--'}/${ROUNDS}`;
+
+    function resizeCanvas(){
+      // CSSサイズに合わせて内部ピクセルを調整（高DPI対応）
+      const rect = canvas.getBoundingClientRect();
+      W = Math.max(320, Math.floor(rect.width * dpr));
+      H = Math.max(320, Math.floor(rect.height * dpr));
+      canvas.width = W; canvas.height = H;
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.scale(dpr, dpr);
+      draw();
+    }
+    window.addEventListener('resize', resizeCanvas, {passive:true});
+    window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200), {passive:true});
+
+    function rand(min, max){ return Math.random() * (max - min) + min; }
+    function randi(min, max){ return Math.floor(rand(min, max + 1)); }
+    function dist2(a,b){ const dx = a.x-b.x, dy = a.y-b.y; return dx*dx + dy*dy; }
+
+    function generateSide(sideRect, count){
+      // 半分の領域内に円を重なりなく配置。失敗時は半径を縮めて再試行。
+      const {x, y, w, h} = sideRect;
+      let r = Math.max(10, Math.min(w, h) / 18); // 初期半径
+      const maxTries = 6;
+      for (let attempt=0; attempt<maxTries; attempt++){
+        const circles = [];
+        let ok = true;
+        for (let i=0;i<count;i++){
+          let placed = false;
+          for (let t=0;t<400;t++){
+            const cx = randi(x + PAD + r, x + w - PAD - r);
+            const cy = randi(y + PAD + r, y + h - PAD - r);
+            const c = {x:cx, y:cy, r};
+            if (circles.every(p => dist2(p,c) >= (p.r + c.r + MARGIN) ** 2)){
+              circles.push(c); placed = true; break;
+            }
+          }
+          if (!placed){ ok = false; break; }
+        }
+        if (ok) return circles;
+        r = Math.max(8, r * 0.88); // 失敗したら少し半径を縮める
+      }
+      // 最後の手段：簡易グリッド
+      const cols = Math.ceil(Math.sqrt(count));
+      const rows = Math.ceil(count / cols);
+      const gw = w / cols, gh = h / rows;
+      const rr = Math.max(8, Math.min(gw, gh) * 0.28);
+      const circles = [];
+      for (let i=0;i<count;i++){
+        const rIdx = Math.floor(i/cols), cIdx = i % cols;
+        const cx = Math.round(x + cIdx*gw + gw/2 + randi(-Math.min(12,gw*0.2), Math.min(12,gw*0.2)));
+        const cy = Math.round(y + rIdx*gh + gh/2 + randi(-Math.min(12,gh*0.2), Math.min(12,gh*0.2)));
+        circles.push({x:cx, y:cy, r:rr});
+      }
+      return circles;
+    }
+
+    function newRound(){
+      roundLocked = false; // 入力ロック解除
+      round++;
+      if (round > ROUNDS){ endGame(); return; }
+
+      // 左右の個数（1〜10）で、必ず不等に
+      do {
+        leftCount = randi(MIN_COUNT, MAX_COUNT);
+        rightCount = randi(MIN_COUNT, MAX_COUNT);
+      } while (leftCount === rightCount);
+
+      // 領域
+      const halfW = Math.floor(W/dpr/2), fullH = Math.floor(H/dpr);
+      const leftRect  = {x:0,         y:0, w:halfW, h:fullH};
+      const rightRect = {x:halfW + 0, y:0, w:halfW, h:fullH};
+
+      leftCircles  = generateSide(leftRect, leftCount);
+      rightCircles = generateSide(rightRect, rightCount);
+
+      roundEl.textContent = round;
+      draw();
+    }
+
+    function startGame(){
+      state = 'playing'; round = 0; score = 0; roundLocked = false;
+      scoreEl.textContent = score;
+      startBtn.classList.add('hidden');
+      againBtn.classList.add('hidden');
+      hideToast();
+      newRound();
+    }
+
+    function endGame(){
+      state = 'ended';
+      const finalScore = Math.min(score, ROUNDS);
+      showToast(`結果：${finalScore}/${ROUNDS}`, 1600);
+      againBtn.classList.remove('hidden');
+      // ベスト更新
+      if (finalScore > best){
+        best = finalScore;
+        localStorage.setItem('cmp_best', String(best));
+        bestEl.textContent = `Best: ${best}/${ROUNDS}`;
+      }
+    }
+
+    function draw(){
+      const w = Math.floor(W/dpr), h = Math.floor(H/dpr);
+      ctx.clearRect(0,0,w,h);
+
+      // 背景
+      ctx.fillStyle = '#0f1220';
+      ctx.fillRect(0,0,w,h);
+
+      // 中央の仕切り
+      ctx.strokeStyle = 'rgba(255,255,255,.12)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h);
+      ctx.stroke();
+
+      // 左右の円を描画
+      drawCircles(leftCircles, '#60a5fa');
+      drawCircles(rightCircles, '#f59e0b');
+
+      // ラベル
+      ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = 'rgba(255,255,255,.6)';
+      ctx.fillText(`左: ${leftCount}`, w*0.25, 8);
+      ctx.fillText(`右: ${rightCount}`, w*0.75, 8);
+
+      if (state !== 'playing'){
+        ctx.fillStyle = 'rgba(0,0,0,.3)';
+        ctx.fillRect(0,0,w,h);
+        ctx.fillStyle = '#eef2ff';
+        ctx.font = '800 24px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.fillText('タップで開始', w/2, h/2 - 10);
+      }
+    }
+
+    function drawCircles(list, color){
+      const g = ctx.createLinearGradient(0,0,0,H/dpr);
+      // ほんのり立体感
+      g.addColorStop(0, color);
+      g.addColorStop(1, shade(color, -0.2));
+      ctx.fillStyle = g;
+      list.forEach(c=>{
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.r, 0, Math.PI*2);
+        ctx.fill();
+        // エッジ
+        ctx.strokeStyle = 'rgba(255,255,255,.1)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+    }
+
+    function shade(hex, p){
+      // hex like #RRGGBB, p in [-1,1]
+      const n = parseInt(hex.slice(1),16);
+      let r=(n>>16)&255,g=(n>>8)&255,b=n&255;
+      r=Math.round(r+(p<0? r*p : (255-r)*p));
+      g=Math.round(g+(p<0? g*p : (255-g)*p));
+      b=Math.round(b+(p<0? b*p : (255-b)*p));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function handlePick(clientX){
+      if (state!== 'playing') { startGame(); return; }
+      if (roundLocked) return; // 多重入力防止
+      roundLocked = true;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const pickLeft = x < rect.width/2;
+      const correct = (leftCount > rightCount && pickLeft) || (rightCount > leftCount && !pickLeft);
+
+      flashSide(pickLeft, correct);
+      if (correct){
+        score++; scoreEl.textContent = score;
+        showToast('正解！', 500);
+      } else {
+        showToast('はずれ…', 500);
+      }
+      setTimeout(newRound, 280);
+    }
+
+    function flashSide(isLeft, ok){
+      const w = Math.floor(W/dpr), h = Math.floor(H/dpr);
+      const x1 = isLeft ? 0 : w/2, x2 = isLeft ? w/2 : w;
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = ok ? '#22c55e' : '#ef4444';
+      ctx.fillRect(x1, 0, x2-x1, h);
+      ctx.restore();
+    }
+
+    // タップ/クリック（pointer優先。未対応環境はclickへフォールバック）
+    function setupPointer(){
+      const usePointer = 'onpointerup' in window;
+      if (usePointer){
+        canvas.addEventListener('pointerup', (e)=>{ e.preventDefault(); handlePick(e.clientX); }, {passive:false});
+        startBtn.addEventListener('pointerup', (e)=>{ e.preventDefault(); startGame(); }, {passive:false});
+        againBtn.addEventListener('pointerup', (e)=>{ e.preventDefault(); startGame(); }, {passive:false});
+      } else {
+        canvas.addEventListener('click', (e)=> handlePick(e.clientX));
+        startBtn.addEventListener('click', startGame);
+        againBtn.addEventListener('click', startGame);
+      }
+    }
+
+    function showToast(text, ms=800){
+      toast.textContent = text;
+      toast.classList.remove('hidden');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(()=>toast.classList.add('hidden'), ms);
+    }
+    function hideToast(){ toast.classList.add('hidden'); }
+
+    // 初期化
+    setupPointer();
+    resizeCanvas();
+    draw();
+  })();
+  </script>
+</body>
+</html>

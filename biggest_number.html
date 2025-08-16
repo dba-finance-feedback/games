@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>最大の数字をタップ！（One-Page版：iOS対応）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <style>
+    :root{
+      --bg:#0b0e14; --card:#121826; --text:#eef2ff; --muted:#9aa4b2; --accent:#60a5fa;
+      --ok:#22c55e; --ng:#ef4444; --btn:#1f2937; --shadow:0 6px 16px rgba(0,0,0,.25);
+      --radius:16px; --tap:180ms; --gap:12px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN","Noto Sans JP", Arial, sans-serif;
+      background:linear-gradient(180deg,#0b0e14 0%, #0e1320 100%); color:var(--text);
+      -webkit-tap-highlight-color: transparent; -webkit-touch-callout:none; user-select:none;
+      padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+    }
+    .app{ max-width: 860px; margin: 0 auto; padding: 12px clamp(12px,4vw,20px) 20px;
+      display:flex; flex-direction:column; gap:var(--gap); min-height: 100svh; }
+    header{ display:flex; align-items:center; gap:10px; background: rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.06); border-radius: var(--radius); padding:10px 12px;
+      box-shadow: var(--shadow); backdrop-filter: blur(6px); }
+    header h1{ font-size: clamp(18px, 2.4vw, 22px); margin:0; white-space: nowrap; }
+    .spacer{flex:1}
+    .pill{ background:#0f172a; color:var(--text); border:1px solid rgba(255,255,255,.08);
+      border-radius:999px; padding:6px 10px; font-size:13px; display:flex; align-items:center; gap:6px; }
+    .iconbtn{ border:1px solid rgba(255,255,255,.12); background: var(--btn); color: var(--text);
+      border-radius: 10px; padding:10px 12px; font-size: 16px; cursor:pointer;
+      transition: transform var(--tap), filter var(--tap); touch-action: manipulation; }
+    .iconbtn:active{ transform: scale(.96) }
+    .iconbtn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
+
+    .main-card{ background: var(--card); border:1px solid rgba(255,255,255,.08); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: clamp(10px,2.2vw,16px); display:flex; flex-direction:column; gap:12px; min-height: 0; }
+
+    .hud{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:14px; color: var(--muted); padding: 2px 4px; }
+    .stack{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+    /* プレイエリア：端末に合わせて高さを調整 */
+    .arena{ position: relative; background: #0f1220; border:1px solid rgba(255,255,255,.08);
+      border-radius: 14px; overflow: hidden; width: 100%; height: clamp(360px, 60svh, 70svh); }
+
+    .overlay-center{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(transparent 40%, rgba(0,0,0,.35)); pointer-events:none; user-select:none;
+      font-weight: 800; text-shadow: 0 10px 30px rgba(0,0,0,.55); }
+    .count-num{ font-size: clamp(48px, 12vw, 120px); letter-spacing: .02em; opacity:.98; }
+
+    .num{ position:absolute; width:84px; height:84px; min-width:56px; min-height:56px; border-radius: 999px;
+      border:1px solid rgba(255,255,255,.12); background:#172033; color:#eef2ff; font-weight:900; font-size: 30px;
+      display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action: manipulation; /* iOS: 300ms遅延回避 */
+      transition: transform var(--tap), background var(--tap), box-shadow var(--tap), filter var(--tap);
+      box-shadow: 0 6px 14px rgba(0,0,0,.25); user-select:none; }
+    .num:focus-visible{ outline:2px solid var(--accent); outline-offset:3px }
+    .num:active{ transform: scale(.94) }
+    .num.correct{ background:#0b3320; border-color:#22c55e; box-shadow: 0 8px 24px rgba(34,197,94,.35); }
+    .num.wrong{ background:#2a0f12; border-color:#ef4444; box-shadow: 0 8px 24px rgba(239,68,68,.35); animation: shake .28s ease-in-out }
+    @keyframes shake { 0%,100%{ transform: translateX(0) } 20%{ transform: translateX(-6px) } 40%{ transform: translateX(6px) } 60%{ transform: translateX(-4px) } 80%{ transform: translateX(4px) } }
+
+    .footer{ display:flex; align-items:center; gap:10px; flex-wrap: wrap; justify-content: space-between; color: var(--muted); }
+    .ad{ width:100%; min-height:60px; border:1px dashed rgba(255,255,255,.18); border-radius:12px; display:flex; align-items:center; justify-content:center; color:#9aa4b2; background:#0f1322; }
+    .btn{ padding: 14px 16px; border-radius: 12px; border:1px solid rgba(255,255,255,.12); background:#0f172a; color:var(--text); font-weight:700; cursor:pointer; touch-action: manipulation; transition: transform var(--tap), filter var(--tap), background var(--tap); }
+    .btn.primary{ background: linear-gradient(180deg,#2563eb,#1d4ed8); border-color: rgba(255,255,255,.15) }
+    .btn:active{ transform: translateY(1px) scale(.98) }
+    .btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
+    .subtitle{ color: var(--muted); font-size: 14px }
+    .center{ display:flex; justify-content:center; gap:10px; flex-wrap:wrap }
+    .hidden{ display:none !important }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <header>
+      <h1 aria-label="ゲームタイトル">最大の数字をタップ！</h1>
+      <div class="spacer"></div>
+      <div class="pill" id="bestPill" aria-live="polite" aria-label="ベスト記録表示">Best --/10, --.-s</div>
+      <button class="iconbtn" id="soundToggle" aria-label="サウンドON/OFF" title="サウンドON/OFF">🔊</button>
+    </header>
+
+    <section class="main-card" role="main">
+      <div class="hud">
+        <div class="stack"><span id="qIndicator" aria-live="polite">タップで開始できます</span></div>
+        <div class="stack"><span id="liveTime">Time: 0.00s</span><span>｜</span><span id="liveCorrect">Correct: 0</span></div>
+      </div>
+
+      <div class="arena" id="arena" aria-label="プレイエリア">
+        <div class="overlay-center" id="countOverlay"><div class="count-num" id="countText"></div></div>
+      </div>
+
+      <div id="panel">
+        <div id="titlePanel">
+          <h2>ワンタップ反射ゲーム</h2>
+          <p class="subtitle">ランダムに出る1桁の数字から<strong>最大の数字</strong>をタップ。10問連続で<strong>合計タイム</strong>と<strong>正答数</strong>を競います。</p>
+          <div class="center">
+            <button id="startBtn" class="btn primary" aria-label="ゲーム開始">タップしてスタート</button>
+            <button id="howBtn" class="btn" aria-label="遊び方を見る">遊び方</button>
+          </div>
+        </div>
+
+        <div id="howPanel" class="hidden">
+          <h3>遊び方</h3>
+          <ul class="subtitle">
+            <li>最初にカウントダウン「3,2,1, START!」が1回だけ表示されます。</li>
+            <li>各問題は<strong>3〜6個</strong>の数字（0〜9）がランダム位置に出現します。</li>
+            <li><strong>最大の数字</strong>を<strong>ボタンをタップ</strong>して選びます。（iPhone/iPad対応）</li>
+            <li>10問終了で結果表示。ベストは自動保存され、ヘッダに表示されます。</li>
+            <li>サウンドは右上ボタンでON/OFF（設定は保存されます）。</li>
+          </ul>
+          <div class="center">
+            <button id="backBtn" class="btn">戻る</button>
+            <button id="startBtn2" class="btn primary">今すぐスタート</button>
+          </div>
+        </div>
+
+        <div id="resultPanel" class="hidden" aria-live="polite">
+          <h2>結果</h2>
+          <p id="resultText" style="font-size:18px; margin-top:-6px"></p>
+          <p id="bestText" class="subtitle"></p>
+          <div class="center">
+            <button id="retryBtn" class="btn primary" aria-label="もう一度プレイ">もう一度</button>
+            <button id="toTitleBtn" class="btn" aria-label="タイトルへ戻る">タイトルへ</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+  ;(() => {
+    const $ = sel => document.querySelector(sel);
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    const arena = $('#arena');
+    const qIndicator = $('#qIndicator');
+    const liveTime = $('#liveTime');
+    const liveCorrect = $('#liveCorrect');
+    const bestPill = $('#bestPill');
+    const soundToggle = $('#soundToggle');
+    const countOverlay = $('#countOverlay');
+    const countText = $('#countText');
+    const titlePanel = $('#titlePanel');
+    const howPanel = $('#howPanel');
+    const resultPanel = $('#resultPanel');
+    const startBtn = $('#startBtn');
+    const startBtn2 = $('#startBtn2');
+    const howBtn = $('#howBtn');
+    const backBtn = $('#backBtn');
+    const retryBtn = $('#retryBtn');
+    const toTitleBtn = $('#toTitleBtn');
+    const resultText = $('#resultText');
+    const bestText = $('#bestText');
+
+    $('#yy').textContent = new Date().getFullYear();
+
+    // ---- 乱数（crypto 優先） ----
+    function randInt(min, max){
+      if (window.crypto?.getRandomValues){
+        const range = max - min + 1; const maxUnbiased = Math.floor(0xFFFFFFFF / range) * range; let x;
+        do { const buf = new Uint32Array(1); crypto.getRandomValues(buf); x = buf[0]; } while (x >= maxUnbiased);
+        return min + (x % range);
+      }
+      return Math.floor(Math.random()* (max-min+1)) + min;
+    }
+
+    // ---- Web Audio ----
+    let audioCtx = null; let soundOn = true; const SOUND_KEY = 'soundOn';
+    const storedSound = localStorage.getItem(SOUND_KEY); if (storedSound !== null) soundOn = storedSound === 'true';
+    function updateSoundUI(){ soundToggle.textContent = soundOn ? '🔊' : '🔇'; soundToggle.setAttribute('aria-label', soundOn ? 'サウンドON' : 'サウンドOFF'); }
+    updateSoundUI();
+    function ensureAudioContext(){
+      if (!audioCtx){ try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ audioCtx = null; } }
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }
+    function beep({freq=440, duration=0.12, type='sine', volume=0.15}={}){
+      if (!soundOn) return; ensureAudioContext(); if (!audioCtx) return;
+      const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+      osc.type = type; osc.frequency.value = freq; gain.gain.value = volume; osc.connect(gain).connect(audioCtx.destination);
+      const now = audioCtx.currentTime; osc.start(now); gain.gain.setValueAtTime(volume, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration); osc.stop(now + duration + 0.02);
+    }
+    soundToggle.addEventListener('pointerup', () => { soundOn = !soundOn; localStorage.setItem(SOUND_KEY, String(soundOn)); updateSoundUI(); if (soundOn) beep({freq:880, duration:.08, type:'square', volume:.12}); }, {passive:true});
+
+    // ---- ベスト記録 ----
+    const BEST_CORRECT_KEY = 'bestCorrect'; const BEST_TIME_KEY = 'bestTimeMs';
+    function getBest(){ const c = Number(localStorage.getItem(BEST_CORRECT_KEY) || 0); const t = Number(localStorage.getItem(BEST_TIME_KEY) || 0); return {correct:c, timeMs:t}; }
+    function setBest(correct, timeMs){ localStorage.setItem(BEST_CORRECT_KEY, String(correct)); localStorage.setItem(BEST_TIME_KEY, String(timeMs)); }
+    function betterThan(a,b){ if (a.correct !== b.correct) return a.correct > b.correct; if (b.timeMs===0) return true; return a.timeMs < b.timeMs; }
+    function fmtTime(ms){ return (ms/1000).toFixed(2) + 's'; }
+    function updateBestPill(){ const best = getBest(); bestPill.textContent = (best.timeMs>0 || best.correct>0) ? `Best ${best.correct}/10, ${(best.timeMs/1000).toFixed(2)}s` : 'Best --/10, --.-s'; }
+    updateBestPill();
+
+    // ---- ゲーム状態 ----
+    const TOTAL_Q = 10; let questionIndex = 0; let correctCount = 0; let startTime = 0; let timerRAF = null; let buttons = []; let resizeQueued = false; let lock = false;
+    window.addEventListener('resize', () => { resizeQueued = true; });
+
+    function resetHUD(){ qIndicator.textContent = 'タップで開始できます'; liveTime.textContent = 'Time: 0.00s'; liveCorrect.textContent = 'Correct: 0'; }
+
+    function showTitle(){ arena.innerHTML = '<div class="overlay-center" id="countOverlay"><div class="count-num" id="countText"></div></div>';
+      resultPanel.classList.add('hidden'); howPanel.classList.add('hidden'); titlePanel.classList.remove('hidden'); resetHUD(); }
+    function showHow(){ titlePanel.classList.add('hidden'); howPanel.classList.remove('hidden'); }
+    function showResult(correct, ms){ titlePanel.classList.add('hidden'); howPanel.classList.add('hidden'); resultPanel.classList.remove('hidden');
+      const bestOld = getBest(); const cand = {correct, timeMs: ms}; let updated=false; if (betterThan(cand,bestOld)){ setBest(correct, ms); updated=true; }
+      updateBestPill(); resultText.textContent = `正答数：${correct} / ${TOTAL_Q}　｜　合計タイム：${fmtTime(ms)}`;
+      bestText.textContent = updated ? '🎉 ベスト記録を更新しました！' : `ベスト：${bestOld.correct}/10, ${bestOld.timeMs?fmtTime(bestOld.timeMs):'--.-s'}`; }
+
+    async function countdown(){ countOverlay.style.display = 'flex'; const seq = ['3','2','1','START!'];
+      for (const s of seq){ countText.textContent = s; if (s!=='START!') beep({freq:600,duration:.1,type:'triangle',volume:.12}); else beep({freq:980,duration:.18,type:'square',volume:.15}); await new Promise(r=>setTimeout(r, s==='START!'?700:650)); }
+      countOverlay.style.display = 'none'; }
+
+    function aabbOverlap(a,b,margin=8){ return !((a.x + a.w + margin) <= b.x || (b.x + b.w + margin) <= a.x || (a.y + a.h + margin) <= b.y || (b.y + b.h + margin) <= a.y); }
+
+    function layoutButtons(values){
+      const rect = arena.getBoundingClientRect(); const base = Math.min(rect.width, rect.height);
+      let size = clamp(Math.floor(base/4.8), 56, 100); let margin = 8; let tries=0;
+      while (tries++ < 16){ const placed = []; let ok = true; for (let i=0;i<values.length;i++){
+          let done=false; for (let t=0;t<220;t++){ const x = randInt(0, Math.max(0, Math.floor(rect.width - size)));
+              const y = randInt(0, Math.max(0, Math.floor(rect.height - size))); const me = {x,y,w:size,h:size};
+              if (placed.every(p=>!aabbOverlap(me,p,margin))){ placed.push(me); done=true; break; } }
+          if (!done){ ok=false; break; } }
+        if (ok) return {rects: placed, size}; if (margin>4) margin -= 2; else size = Math.max(56, Math.floor(size*0.9)); }
+      const cols = Math.ceil(Math.sqrt(values.length)); const rows = Math.ceil(values.length/cols);
+      const gw = rect.width / cols, gh = rect.height / rows; const gsize = clamp(Math.floor(Math.min(gw,gh)*0.7), 56, 96);
+      const rects = values.map((_,i)=>{ const r = Math.floor(i/cols), c = i%cols; const cx = c*gw + (gw-gsize)/2, cy = r*gh + (gh-gsize)/2;
+        const jx = clamp(cx + randInt(-12,12), 0, rect.width - gsize); const jy = clamp(cy + randInt(-12,12), 0, rect.height - gsize);
+        return {x:Math.floor(jx), y:Math.floor(jy), w:gsize, h:gsize}; });
+      return {rects, size:gsize}; }
+
+    function makeNumbers(){ const n = randInt(3,6); return Array.from({length:n}, () => randInt(0,9)); }
+
+    function registerTap(el, handler){
+      let used = false; const wrap = (e)=>{ if (used || lock) return; used = true; handler(e); setTimeout(()=>{ used=false; }, 0); };
+      el.addEventListener('pointerup', wrap, {passive:true}); // iOS/Androidのタップ
+      el.addEventListener('click', wrap, {passive:true});    // フォールバック（PCブラウザなど）
+    }
+
+    function renderQuestion(){
+      qIndicator.textContent = `問題 ${questionIndex+1} / ${TOTAL_Q}`; liveCorrect.textContent = `Correct: ${correctCount}`;
+      const values = makeNumbers(); const maxVal = Math.max(...values);
+      arena.innerHTML = '<div class="overlay-center" id="countOverlay" style="display:none"><div class="count-num" id="countText"></div></div>';
+      const {rects} = layoutButtons(values); buttons = [];
+      values.forEach((v,i)=>{ const r = rects[i]; const btn = document.createElement('button');
+        btn.className = 'num'; btn.style.left = r.x+'px'; btn.style.top = r.y+'px'; btn.style.width = r.w+'px'; btn.style.height = r.h+'px';
+        btn.textContent = String(v); btn.setAttribute('aria-label', `数字 ${v}`); btn.dataset.val = String(v);
+        registerTap(btn, () => onTap(btn, v, maxVal)); arena.appendChild(btn); buttons.push(btn); });
+      if (questionIndex === 0){ startTime = performance.now(); tickTime(); }
+      resizeQueued = false;
+    }
+
+    function tickTime(){ cancelAnimationFrame(timerRAF); const loop = () => { const now = performance.now(); const elapsed = now - startTime; liveTime.textContent = `Time: ${(elapsed/1000).toFixed(2)}s`; timerRAF = requestAnimationFrame(loop); }; timerRAF = requestAnimationFrame(loop); }
+
+    function onTap(btn, value, maxVal){ if (lock) return; const correct = (value === maxVal);
+      if (correct){ btn.classList.add('correct'); beep({freq:900, duration:.1, type:'square', volume:.12}); correctCount++; }
+      else { btn.classList.add('wrong'); beep({freq:250, duration:.12, type:'sawtooth', volume:.12}); }
+      lock = true; setTimeout(()=>{ lock = false; nextQuestion(); }, 240);
+    }
+
+    function nextQuestion(){ questionIndex++; if (questionIndex >= TOTAL_Q){ cancelAnimationFrame(timerRAF); const end = performance.now(); const totalMs = end - startTime; showResult(correctCount, totalMs); return; }
+      renderQuestion(); }
+
+    async function startGame(){ questionIndex = 0; correctCount = 0; lock = false; resetHUD(); titlePanel.classList.add('hidden'); howPanel.classList.add('hidden'); resultPanel.classList.add('hidden'); ensureAudioContext(); await countdown(); renderQuestion(); }
+
+    // ---- イベント（タップ主体） ----
+    registerTap(startBtn, startGame);
+    if (startBtn2) registerTap(startBtn2, startGame);
+    registerTap(howBtn, showHow);
+    registerTap(backBtn, showTitle);
+    registerTap(retryBtn, startGame);
+    registerTap(toTitleBtn, showTitle);
+
+    // 初期表示
+    showTitle();
+  })();
+  </script>
+</body>
+</html>
