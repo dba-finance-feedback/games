@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <!-- スマートフォン用の表示設定：画面幅に合わせて表示、ピンチズーム無効、画面端の安全領域を考慮 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>タッチ花火あそび</title>
+  
+  <!-- ===============================================================
+       タッチ花火あそびアプリ
+       
+       【目的】
+       1歳児向けの知育おもちゃアプリ。画面をタッチすると花火が爆発する
+       シンプルな仕組みで、視覚・聴覚・触覚（振動）を刺激し、
+       因果関係（タッチ→花火）の理解を促進する。
+       
+       【主な機能】
+       - タッチした場所で花火が爆発
+       - リアルな爆発音とキラキラ音
+       - カラフルな10色の花火がランダムに選択
+       - パーティクル（火の粉）がゆっくり消える演出
+       - マルチタッチ対応（複数の指で同時タッチ可能）
+       - 振動フィードバック（対応端末のみ）
+       
+       【技術仕様】
+       - 単一HTMLファイルで完結（外部ファイル不要）
+       - Canvas APIで描画（軽量で高速）
+       - Web Audio APIで音声生成（外部音源不要）
+       - レスポンシブ対応（スマホ・タブレット・PC）
+       =============================================================== -->
+  
+  <style>
+    /* CSS変数の定義：色を一箇所で管理できるようにする */
+    :root{
+      --bg: #0f1220;      /* 背景の基本色（濃い紺色） */
+      --text: #e8ecf1;    /* 文字色（薄いグレー） */
+    }
+    
+    /* 全要素の基本設定：ボックスサイジング統一、タップ時のハイライト無効化 */
+    *{
+      box-sizing:border-box;                    /* paddingとborderを幅に含める */
+      -webkit-tap-highlight-color:transparent;  /* iOS/Androidでタップ時の青いハイライトを消す */
+    }
+    
+    /* HTML要素とBODY要素の基本設定 */
+    html,body{
+      height:100%;      /* 画面全体の高さを使用 */
+      margin:0;         /* デフォルトの余白を削除 */
+      padding:0;        /* デフォルトの内側余白を削除 */
+      overflow:hidden;  /* スクロールバーを非表示（画面固定） */
+    }
+    
+    /* BODY要素の詳細設定 */
+    body{
+      /* グラデーション背景：下から上に向かって明るくなる夜空を表現 */
+      background: radial-gradient(100% 100% at 50% 100%, #1a2340, #0a0d1a 70%), var(--bg);
+      color: var(--text);                                    /* 文字色 */
+      font-family: system-ui, -apple-system, sans-serif;     /* システムフォントを使用 */
+      position: relative;                                    /* 子要素の位置指定の基準にする */
+      touch-action: none;                                    /* ブラウザのデフォルトタッチ動作を無効化 */
+      user-select: none;                                     /* テキスト選択を無効化 */
+    }
+    
+    /* 花火を描画するキャンバス要素 */
+    #canvas{
+      position: absolute;     /* 絶対位置指定で画面全体に配置 */
+      top: 0;                /* 上端から0px */
+      left: 0;               /* 左端から0px */
+      width: 100%;           /* 幅100% */
+      height: 100%;          /* 高さ100% */
+      pointer-events: none;  /* マウス/タッチイベントを透過（下の要素に伝える） */
+    }
+    
+    /* 戻るボタンのスタイル */
+    .backBtn{
+      position:fixed;                                         /* 画面に固定表示 */
+      top:calc(env(safe-area-inset-top) + 8px);             /* iPhone等のノッチを避けて配置 */
+      left:calc(env(safe-area-inset-left) + 8px);           /* 左端の安全領域を考慮 */
+      z-index:10000;                                         /* 最前面に表示 */
+      display:inline-flex;                                   /* フレックスボックスでアイコンと文字を横並び */
+      align-items:center;                                    /* 縦方向中央揃え */
+      gap:6px;                                               /* アイコンと文字の間隔 */
+      padding:8px 10px;                                      /* 内側の余白 */
+      border-radius:12px;                                    /* 角を丸くする */
+      text-decoration:none;                                  /* 下線を消す */
+      background:#1a1f36;                                    /* 背景色（暗い青） */
+      color:var(--text);                                     /* 文字色 */
+      border:1px solid #2d3352;                             /* 枠線 */
+      font-weight:800;                                       /* 太字 */
+      font-size:14px;                                        /* 文字サイズ */
+      box-shadow:0 4px 12px rgba(0,0,0,.35);                /* 影で立体感を出す */
+      opacity: 0.8;                                          /* 少し透明にして邪魔にならないように */
+    }
+    
+    /* 戻るボタンを押したときのエフェクト */
+    .backBtn:active{
+      transform:translateY(1px) scale(.99);  /* 少し下に移動&縮小で押した感を演出 */
+      background:#233055;                     /* 背景色を少し明るく */
+    }
+    
+    /* 画面下部のタイトル表示 */
+    .title{
+      position: fixed;                               /* 画面に固定 */
+      bottom: calc(env(safe-area-inset-bottom) + 20px); /* 下端の安全領域を考慮 */
+      left: 50%;                                    /* 左から50%の位置に */
+      transform: translateX(-50%);                  /* 自身の幅の50%左に移動（中央寄せ） */
+      font-size: 18px;                              /* 文字サイズ */
+      font-weight: 800;                             /* 太字 */
+      opacity: 0.6;                                 /* 少し透明に */
+      pointer-events: none;                         /* タッチイベントを透過 */
+    }
+  </style>
+</head>
+<body>
+  <!-- 戻るボタン：親ページ（./）に戻る -->
+  <a class="backBtn" href="./" aria-label="メインページに戻る">← もどる</a>
+  
+  <!-- 花火を描画するキャンバス -->
+  <canvas id="canvas"></canvas>
+  
+  <!-- 操作説明のテキスト -->
+  <div class="title">タッチして花火をあげよう！</div>
+  
+  <script>
+  // ===============================================================
+  // JavaScriptコード開始
+  // 即時実行関数で囲むことで、変数がグローバルスコープを汚染しないようにする
+  // ===============================================================
+  (function(){
+    'use strict';  // 厳格モード：エラーを見つけやすくする
+    
+    // ---------------------------------------------------------------
+    // Canvas（描画領域）の初期設定
+    // ---------------------------------------------------------------
+    const canvas = document.getElementById('canvas');  // HTML内のcanvas要素を取得
+    const ctx = canvas.getContext('2d');              // 2D描画用のコンテキスト（描画命令を送るオブジェクト）を取得
+    let width = window.innerWidth;                    // ブラウザの表示領域の幅
+    let height = window.innerHeight;                  // ブラウザの表示領域の高さ
+    
+    // 高解像度ディスプレイ対応（Retinaディスプレイなど）
+    // devicePixelRatioは、1CSSピクセルが実際の何ピクセルに相当するかを示す
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;                       // 実際のキャンバスサイズを画面解像度に合わせる
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';                // CSS上の表示サイズは元のまま
+    canvas.style.height = height + 'px';
+    ctx.scale(dpr, dpr);                              // 描画をスケールアップして鮮明に表示
+    
+    // ウィンドウサイズが変更されたときの処理（画面回転やリサイズ対応）
+    window.addEventListener('resize', () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      ctx.scale(dpr, dpr);
+    });
+    
+    // ---------------------------------------------------------------
+    // 音声システムの初期化
+    // WebAudio APIを使って音を生成（外部音源ファイル不要）
+    // ---------------------------------------------------------------
+    let audioCtx = null;        // AudioContextオブジェクト（音声処理の中心）
+    let audioUnlocked = false;  // 音声が有効化されたかのフラグ
+    
+    // 音声システムを有効化する関数
+    // ※ブラウザのセキュリティ制限により、ユーザー操作後でないと音が出せない
+    function ensureAudio(){
+      if (audioUnlocked) return;  // 既に有効化済みなら何もしない
+      
+      // AudioContextを作成（ブラウザによって名前が違うので両方試す）
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // サスペンド状態の場合は再開
+      if (audioCtx.state !== 'running') audioCtx.resume();
+      
+      audioUnlocked = true;  // 有効化完了フラグ
+    }
+    
+    // ---------------------------------------------------------------
+    // 花火の爆発音を生成する関数
+    // ノイズと複数の音波を組み合わせてリアルな音を作る
+    // ---------------------------------------------------------------
+    function playFireworkSound(){
+      if (!audioUnlocked) return;  // 音声が有効化されていなければ何もしない
+      
+      const now = audioCtx.currentTime;  // 現在の音声コンテキストの時間
+      
+      // ===== 爆発音（ノイズ）の生成 =====
+      // BufferSourceはメモリ上の音声データを再生するノード
+      const noise = audioCtx.createBufferSource();
+      
+      // 0.15秒分のノイズデータを格納するバッファを作成
+      const noiseBuffer = audioCtx.createBuffer(
+        1,                               // チャンネル数（1=モノラル）
+        audioCtx.sampleRate * 0.15,     // サンプル数（サンプルレート×秒数）
+        audioCtx.sampleRate              // サンプルレート（1秒あたりのサンプル数）
+      );
+      
+      // ノイズデータを生成（ランダムな値で埋める）
+      const noiseData = noiseBuffer.getChannelData(0);  // チャンネル0のデータ配列を取得
+      for (let i = 0; i < noiseData.length; i++) {
+        noiseData[i] = (Math.random() - 0.5) * 0.5;  // -0.25～0.25のランダム値
+      }
+      noise.buffer = noiseBuffer;  // バッファをセット
+      
+      // 音量を制御するゲインノード
+      const noiseGain = audioCtx.createGain();
+      noiseGain.gain.setValueAtTime(0.25, now);                           // 開始時の音量
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);     // 0.15秒かけて減衰
+      
+      // 特定の周波数帯域だけを通すフィルター（爆発音らしくする）
+      const noiseFilter = audioCtx.createBiquadFilter();
+      noiseFilter.type = 'bandpass';                                      // バンドパスフィルター
+      noiseFilter.frequency.setValueAtTime(800, now);                     // 開始時800Hz中心
+      noiseFilter.frequency.exponentialRampToValueAtTime(200, now + 0.15); // 200Hzまで下降
+      
+      // ノードを接続：noise → filter → gain → スピーカー
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(audioCtx.destination);  // destinationはスピーカーを表す
+      noise.start(now);                         // 再生開始
+      
+      // ===== キラキラ音（高音）の生成 =====
+      // 3つの高音を少しずつ遅らせて鳴らす
+      for(let i = 0; i < 3; i++){
+        const osc = audioCtx.createOscillator();  // 音波を生成するオシレーター
+        const gain = audioCtx.createGain();       // 音量調整用
+        
+        osc.type = 'sine';  // サイン波（純粋な音）
+        
+        // 周波数の設定（1200-2000Hzからスタートして400-600Hzまで下降）
+        osc.frequency.setValueAtTime(
+          1200 + Math.random() * 800,     // 開始周波数（ランダム）
+          now + i * 0.02                  // 開始時刻（少しずつ遅らせる）
+        );
+        osc.frequency.exponentialRampToValueAtTime(
+          400 + Math.random() * 200,      // 終了周波数（ランダム）
+          now + 0.3                       // 0.3秒後
+        );
+        
+        // 音量の設定（0.1から0.001まで減衰）
+        gain.gain.setValueAtTime(0.1, now + i * 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        
+        // 接続と再生
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + i * 0.02);        // 少し遅らせて開始
+        osc.stop(now + 0.4);              // 0.4秒後に停止
+      }
+    }
+    
+    // ---------------------------------------------------------------
+    // パーティクル（火の粉）クラス
+    // 花火の個々の粒子を表現するクラス
+    // ---------------------------------------------------------------
+    class Particle {
+      // コンストラクタ（初期化処理）
+      constructor(x, y, color, velocity, size) {
+        this.x = x;                  // X座標
+        this.y = y;                  // Y座標
+        this.color = color;          // 色（例：'#ff6b6b'）
+        this.velocity = velocity;    // 速度（x,yの移動量を持つオブジェクト）
+        this.size = size;            // 大きさ（半径）
+        this.life = 1.0;             // 生存値（1.0から0に向かって減少）
+        this.decay = Math.random() * 0.003 + 0.002;  // 減衰速度（ランダムで個体差）
+        this.gravity = 0.02;         // 重力加速度
+        this.trail = [];             // 軌跡を保存する配列
+        this.maxTrailLength = 10;    // 軌跡の最大長
+      }
+      
+      // 毎フレーム呼ばれる更新処理
+      update() {
+        // 現在位置を軌跡として記録
+        this.trail.push({
+          x: this.x,
+          y: this.y,
+          life: this.life  // その時点での生存値も記録
+        });
+        
+        // 軌跡が長すぎたら古いものを削除
+        if (this.trail.length > this.maxTrailLength) {
+          this.trail.shift();  // 配列の先頭（最古）を削除
+        }
+        
+        // 物理演算
+        this.velocity.y += this.gravity;     // 重力で下向きの速度が増加
+        this.x += this.velocity.x;           // X方向に移動
+        this.y += this.velocity.y;           // Y方向に移動
+        this.velocity.x *= 0.99;             // 空気抵抗で横方向の速度が減衰
+        this.velocity.y *= 0.99;             // 空気抵抗で縦方向の速度が減衰
+        this.life -= this.decay;             // 生存値を減少
+        
+        // 生存値が負にならないようにする
+        if (this.life < 0) this.life = 0;
+      }
+      
+      // 描画処理
+      draw(ctx) {
+        // ===== 軌跡の描画 =====
+        this.trail.forEach((point, index) => {
+          // 軌跡は古いほど薄く表示
+          const alpha = (index / this.trail.length) * point.life * 0.3;
+          ctx.globalAlpha = alpha;      // 透明度設定
+          ctx.fillStyle = this.color;   // 色設定
+          ctx.beginPath();               // パスの開始
+          ctx.arc(                       // 円を描く
+            point.x, point.y,           // 中心座標
+            this.size * 0.5,            // 半径（本体より小さく）
+            0, Math.PI * 2              // 開始角度、終了角度（完全な円）
+          );
+          ctx.fill();                    // 塗りつぶし
+        });
+        
+        // ===== パーティクル本体の描画 =====
+        ctx.globalAlpha = this.life;    // 生存値を透明度として使用
+        ctx.fillStyle = this.color;     // 色設定
+        ctx.shadowBlur = 20;             // ぼかし効果（光っている感じ）
+        ctx.shadowColor = this.color;   // 影の色（同じ色で光る効果）
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;              // 影効果をリセット
+      }
+    }
+    
+    // ---------------------------------------------------------------
+    // 花火クラス
+    // 複数のパーティクルを管理して花火全体を表現
+    // ---------------------------------------------------------------
+    class Firework {
+      // コンストラクタ
+      constructor(x, y) {
+        this.x = x;                      // 爆発の中心X座標
+        this.y = y;                      // 爆発の中心Y座標
+        this.particles = [];             // パーティクルの配列
+        this.exploded = false;           // 爆発済みフラグ
+        
+        // 使用可能な色のリスト（10色のカラフルな花火）
+        this.colors = [
+          '#ff6b6b',  // 赤
+          '#ff8e53',  // オレンジ
+          '#ffd93d',  // 黄色
+          '#6bcf7f',  // 緑
+          '#4ecdc4',  // 青緑
+          '#45b7d1',  // 水色
+          '#667eea',  // 青紫
+          '#f093fb',  // ピンク紫
+          '#ff6ec7',  // ピンク
+          '#ffc93c'   // 黄金色
+        ];
+        
+        this.explode();  // 即座に爆発させる
+      }
+      
+      // 爆発処理（パーティクルを生成）
+      explode() {
+        // パーティクル数をランダムに決定（40〜60個）
+        const particleCount = 40 + Math.floor(Math.random() * 20);
+        
+        // メインカラーとサブカラーをランダムに選択
+        const color = this.colors[Math.floor(Math.random() * this.colors.length)];
+        const secondaryColor = this.colors[Math.floor(Math.random() * this.colors.length)];
+        
+        // 指定数のパーティクルを生成
+        for (let i = 0; i < particleCount; i++) {
+          // 放射状に均等に配置するための角度計算
+          const angle = (Math.PI * 2 * i) / particleCount + Math.random() * 0.2;
+          const speed = Math.random() * 4 + 2;     // 速度（2〜6）
+          const size = Math.random() * 3 + 2;      // サイズ（2〜5）
+          const useSecondary = Math.random() > 0.7; // 30%の確率でサブカラー
+          
+          // パーティクルを作成して配列に追加
+          this.particles.push(new Particle(
+            this.x,
+            this.y,
+            useSecondary ? secondaryColor : color,  // 色の選択
+            {
+              x: Math.cos(angle) * speed,  // X方向の速度（角度と速さから計算）
+              y: Math.sin(angle) * speed   // Y方向の速度
+            },
+            size
+          ));
+        }
+        
+        // 中心に白い光のパーティクルを追加（爆発の中心を強調）
+        for (let i = 0; i < 8; i++) {
+          const angle = (Math.PI * 2 * i) / 8;  // 8方向に均等配置
+          const speed = Math.random() * 1.5 + 0.5;  // 遅い速度
+          
+          this.particles.push(new Particle(
+            this.x,
+            this.y,
+            '#ffffff',  // 白色
+            {
+              x: Math.cos(angle) * speed,
+              y: Math.sin(angle) * speed
+            },
+            4  // 少し大きめ
+          ));
+        }
+        
+        this.exploded = true;  // 爆発完了フラグ
+      }
+      
+      // 更新処理
+      update() {
+        // 全パーティクルを更新し、死んだパーティクルを削除
+        this.particles = this.particles.filter(p => {
+          p.update();            // パーティクルを更新
+          return p.life > 0;     // 生きているものだけ残す
+        });
+      }
+      
+      // 描画処理
+      draw(ctx) {
+        // 全パーティクルを描画
+        this.particles.forEach(p => p.draw(ctx));
+      }
+      
+      // 花火が完全に消えたかチェック
+      isDead() {
+        return this.particles.length === 0;  // パーティクルが0個なら死んでいる
+      }
+    }
+    
+    // ---------------------------------------------------------------
+    // 花火管理システム
+    // ---------------------------------------------------------------
+    const fireworks = [];  // 現在表示中の花火の配列
+    
+    // 花火を作成する関数
+    function createFirework(x, y) {
+      ensureAudio();                          // 音声システムを有効化
+      fireworks.push(new Firework(x, y));    // 新しい花火を配列に追加
+      playFireworkSound();                    // 爆発音を再生
+      
+      // 振動フィードバック（対応端末のみ）
+      if (navigator.vibrate) {
+        navigator.vibrate(30);  // 30ミリ秒振動
+      }
+    }
+    
+    // ---------------------------------------------------------------
+    // イベントリスナー（ユーザー入力の処理）
+    // ---------------------------------------------------------------
+    
+    // マウスクリック/タッチの処理（ポインターイベントで統一）
+    document.addEventListener('pointerdown', (e) => {
+      // 戻るボタンをクリックした場合は花火を出さない
+      if (e.target.classList.contains('backBtn')) return;
+      
+      // クリック位置に花火を作成
+      createFirework(e.clientX, e.clientY);
+    });
+    
+    // マルチタッチ対応（スマートフォンで複数の指でタッチ）
+    document.addEventListener('touchstart', (e) => {
+      // 戻るボタンをタッチした場合は処理しない
+      if (e.target.classList.contains('backBtn')) return;
+      
+      e.preventDefault();  // デフォルトのタッチ動作（スクロール等）を防ぐ
+      
+      // すべてのタッチポイントで花火を作成
+      for (let touch of e.touches) {
+        createFirework(touch.clientX, touch.clientY);
+      }
+    }, {passive: false});  // preventDefaultを使うためpassive:false
+    
+    // 初回タップで音声を有効化するためのリスナー
+    const unlock = () => {
+      ensureAudio();  // 音声システムを有効化
+      // 一度実行したらリスナーを削除
+      document.removeEventListener('pointerdown', unlock, true);
+      document.removeEventListener('touchstart', unlock, true);
+    };
+    document.addEventListener('pointerdown', unlock, true);
+    document.addEventListener('touchstart', unlock, true);
+    
+    // ---------------------------------------------------------------
+    // アニメーションループ（描画の更新）
+    // requestAnimationFrameで60FPSを目指して繰り返し実行
+    // ---------------------------------------------------------------
+    function animate() {
+      // 画面を少しずつ暗くする（残像効果）
+      // 完全にクリアせず、半透明の黒を重ねることで軌跡が残る
+      ctx.fillStyle = 'rgba(15, 18, 32, 0.1)';  // 10%の不透明度の黒
+      ctx.fillRect(0, 0, width, height);         // 画面全体を塗る
+      
+      // すべての花火を更新・描画
+      // 逆順ループ（削除しながらループするため）
+      for (let i = fireworks.length - 1; i >= 0; i--) {
+        const fw = fireworks[i];
+        fw.update();   // 花火を更新
+        fw.draw(ctx);  // 花火を描画
+        
+        // 完全に消えた花火は配列から削除
+        if (fw.isDead()) {
+          fireworks.splice(i, 1);  // i番目から1個削除
+        }
+      }
+      
+      // 次のフレームでまた実行（無限ループ）
+      requestAnimationFrame(animate);
+    }
+    
+    // アニメーション開始
+    animate();
+    
+    // ---------------------------------------------------------------
+    // 自動花火機能（オプション）
+    // 現在はコメントアウトされているが、有効にすると
+    // 3秒間タッチがない場合に自動で花火が上がる
+    // ---------------------------------------------------------------
+    // // 自動花火タイマーの変数
+    // let autoFireworkTimer;
+    // 
+    // // タイマーをリセットして再設定する関数
+    // function resetAutoFirework() {
+    //   clearTimeout(autoFireworkTimer);  // 既存のタイマーをクリア
+    //   
+    //   // 3秒後に花火を自動生成
+    //   autoFireworkTimer = setTimeout(() => {
+    //     const x = Math.random() * width;                    // ランダムなX座標
+    //     const y = Math.random() * height * 0.7 + height * 0.15;  // 画面の15%〜85%の高さ
+    //     createFirework(x, y);      // 花火を作成
+    //     resetAutoFirework();       // タイマーを再設定（繰り返し）
+    //   }, 3000);  // 3000ミリ秒 = 3秒
+    // }
+    // 
+    // // タッチするたびにタイマーをリセット
+    // document.addEventListener('pointerdown', resetAutoFirework);
+    // document.addEventListener('touchstart', resetAutoFirework);
+    // 
+    // // 初回実行
+    // resetAutoFirework();
+    
+    // ---------------------------------------------------------------
+    // 現在の自動花火の状態について
+    // ---------------------------------------------------------------
+    // 上記のコメントアウトされたコードを有効にすると、
+    // 以下の動作になります：
+    // 
+    // 1. アプリ起動時から3秒のカウントダウン開始
+    // 2. 3秒経過すると自動で花火が1発上がる
+    // 3. その後も3秒ごとに花火が自動で上がり続ける
+    // 4. ユーザーがタッチするとカウントがリセットされる
+    // 
+    // メリット：
+    // - 子供が見ているだけでも楽しめる
+    // - 操作方法がわからなくても花火が見られる
+    // - 画面への注意を引きやすい
+    // 
+    // デメリット：
+    // - タッチとの因果関係が分かりにくくなる可能性
+    // - 意図しない花火で驚く可能性
+    // 
+    // 使用する場合は、上記のコメント記号（//）を削除してください
+    // ---------------------------------------------------------------
+    
+  })();  // 即時実行関数の終了
+  </script>
+</body>
+</html>
