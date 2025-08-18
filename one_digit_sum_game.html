@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <!-- iPhone/iPad 向け viewport。ズーム固定で誤タップ回避。安全域も考慮 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>足し算タイムアタック</title>
+  <style>
+    /* =============================================================
+       配色・影・フォント（外部 CDN なし。システムフォントのみ）
+       ============================================================= */
+    :root{
+      --bg: #0f1220;          /* 背景 */
+      --panel: #171a2a;       /* パネル上部 */
+      --panel2: #0c1020;      /* パネル下部 */
+      --text: #e8ecf1;        /* 本文色 */
+      --muted: #9aa3b5;       /* 補助文字 */
+      --accent: #5cc8ff;      /* 主要ボタン */
+      --ok: #4cd964;          /* 正解色 */
+      --ng: #ff3b30;          /* 不正解色 */
+      --btn: #22263a;         /* 数字ボタン通常 */
+      --btnActive:#2f3552;    /* 数字ボタン押下 */
+      --shadow: 0 8px 24px rgba(0,0,0,.35);
+    }
+
+    *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+    html,body{height:100%}
+    body{
+      margin: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      background: radial-gradient(100% 100% at 0% 0%, #0e142a, #0a0d1a 60%), var(--bg);
+      color: var(--text);
+      font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      height: 100svh;             /* iOS アドレスバー変動吸収 */
+      overflow: hidden;            /* 画面固定 */
+      touch-action: manipulation;  /* タップ遅延回避 */
+    }
+
+    /* 上下 2 分割レイアウト */
+    .app{height:100%; display:flex; flex-direction:column; gap:10px; padding:10px}
+    .top,.bottom{
+      background:linear-gradient(180deg, var(--panel), var(--panel2));
+      border-radius:16px; box-shadow:var(--shadow); padding:12px; display:flex; flex-direction:column; min-height:0
+    }
+    .top{flex:1; gap:8px}
+    .bottom{gap:12px}
+
+    /* 見出しとサブ */
+    header{display:flex; align-items:center; justify-content:space-between; gap:8px}
+    h1{margin:0; font-size:16px; font-weight:800}
+    .sub{color:var(--muted); font-size:14px}
+
+    /* HUD（レベル/Q番号/式） */
+    .hud{display:flex; align-items:center; justify-content:space-between; gap:8px}
+    .pill{padding:6px 10px; border-radius:999px; background:#14182a; border:1px solid #2a2f4a; color:var(--muted); font-size:12px}
+    .result{font-weight:800}
+    .result.ok{color:var(--ok)}
+    .result.ng{color:var(--ng)}
+
+    /* 問題表示（玉をやめて大きな式表示） */
+    .problem{
+      position:relative; flex:1; min-height:0; display:grid; place-items:center; border-radius:12px;
+      background: radial-gradient(120% 100% at 100% 0%, #0a1530, #091023 60%);
+    }
+    .problem .eqBig{ font-size:clamp(42px, 9vw, 96px); font-weight:900; letter-spacing:.02em }
+
+    /* オーバーレイ（カウントダウン・結果） */
+    .overlay{position:absolute; inset:0; display:grid; place-items:center; background:rgba(0,0,0,.35); border-radius:12px; opacity:0; pointer-events:none; transition:opacity .2s}
+    .overlay.show{opacity:1; pointer-events:auto}
+    .overlay .big{font-size:clamp(40px, 8vw, 84px); font-weight:900; letter-spacing:.04em}
+    .overlay .panel{background:#0f1328; border:1px solid #2a2f4a; padding:16px 18px; border-radius:14px; box-shadow:var(--shadow); text-align:center}
+    .overlay .panel h2{margin:0 0 8px; font-size:18px}
+    .overlay .panel p{margin:4px 0; color:var(--muted); font-size:14px}
+
+    /* トースト（正解/不正解） */
+    .toast{position:absolute; inset:0; display:grid; place-items:center; pointer-events:none}
+    .toast > div{font-size:40px; font-weight:900; opacity:0; transform:translateY(8px) scale(.98); transition:opacity .2s, transform .2s; padding:8px 16px; border-radius:12px}
+    .toast.show > .ok{color:var(--ok); opacity:1; transform:translateY(0) scale(1); background:rgba(30,60,30,.25)}
+    .toast.show > .ng{color:var(--ng); opacity:1; transform:translateY(0) scale(1); background:rgba(80,20,20,.25)}
+
+    /* レベル選択（子ども向けに簡易表示） */
+    .levels{display:flex; gap:8px}
+    .levelBtn{flex:1; padding:12px; border-radius:12px; border:1px solid #2d3352; background:#1a1f36; color:var(--text); font-weight:800; font-size:15px}
+    .levelBtn[aria-pressed="true"]{background:#233055}
+    .levelBtn small{display:block; color:var(--muted); font-weight:600}
+
+    /* 数字ボタン：5 列グリッド。"5コずつで改行" を満たす */
+    .btnRow{display:grid; grid-template-columns:repeat(5, 1fr); gap:10px}
+    button.num{
+      appearance:none; border:0; border-radius:14px; padding:16px 0; font-size:22px; font-weight:800; color:var(--text);
+      background:var(--btn); box-shadow:var(--shadow); transition:transform .06s ease, background .12s ease; touch-action:manipulation
+    }
+    button.num:active{transform:translateY(1px) scale(.99); background:var(--btnActive)}
+    button.num[disabled]{opacity:.5; filter:grayscale(30%)}
+
+    /* アクション（スタート/リトライ） */
+    .actions{display:flex; gap:8px}
+    button.secondary{flex:1; padding:12px; border-radius:12px; border:1px solid #2d3352; background:#1a1f36; color:var(--text); font-weight:700}
+    button.primary{flex:1; padding:12px; border-radius:12px; border:0; background:var(--accent); color:#00121a; font-weight:900}
+    /* 左上の戻るボタン（相対パスで ./ に戻る） */
+    .backBtn{position:fixed; top:calc(env(safe-area-inset-top) + 8px); left:calc(env(safe-area-inset-left) + 8px); z-index:10000;
+      display:inline-flex; align-items:center; gap:6px; padding:8px 10px; border-radius:12px; text-decoration:none;
+      background:#1a1f36; color:var(--text); border:1px solid #2d3352; font-weight:800; font-size:14px; box-shadow:var(--shadow)}
+    .backBtn:active{transform:translateY(1px) scale(.99); background:#233055}
+    /* 左上UIコンテナ */
+    .topLeft{
+      position:fixed;
+      top:calc(env(safe-area-inset-top) + 8px);
+      left:calc(env(safe-area-inset-left) + 8px);
+      z-index:10000;
+      display:flex; flex-direction:row; gap:8px; align-items:center;
+    }
+    /* コンテナ内では戻るを通常フローに */
+    .topLeft .backBtn{position:static; top:auto; left:auto;}
+    /* ステータス（左上コンテナ内） */
+    .statusPill{background:#1a1f36; color:var(--text); border:1px solid #2d3352; box-shadow:var(--shadow)}
+
+    @media (max-width:800px){
+      .app{gap:8px; padding:8px}
+      .btnRow{gap:8px}
+      button.num{padding:14px 0; font-size:20px}
+    }
+  </style>
+</head>
+<body>
+  <!-- 戻る：メインページ（./）へ。相対パスなので GitHub Pages でもそのまま動作 -->
+  <div class="topLeft">
+    <a class="backBtn" href="./" aria-label="メインページに戻る">← もどる</a>
+    <div class="pill statusPill" id="status" aria-live="polite"></div>
+  </div>
+  <div class="app" id="app">
+
+    <!-- 上：問題パネル（HUD + 大きな式 + オーバーレイ） -->
+    <section class="top" aria-label="問題パネル">
+      <div class="hud">
+        <div class="pill" id="statusInHud" style="display:none">レベルをえらんで スタート</div>
+        <div class="pill result" id="judge"> </div>
+      </div>
+      <div class="problem" id="problem">
+        <div class="eqBig" id="eqBig">&nbsp;</div>
+        <div class="toast" id="toast">
+          <div class="ok">◯ せいかい</div>
+          <div class="ng">× ちがうよ</div>
+        </div>
+        <div class="overlay" id="overlay"><div class="big" id="overlayText"></div><div class="panel" id="resultPanel" hidden></div></div>
+      </div>
+    </section>
+
+    <!-- 下：操作パネル（レベル選択 + 数字ボタン + スタート/リトライ） -->
+    <section class="bottom" aria-label="選択パネル">
+      <header>
+        <h1>足し算タイムアタック</h1>
+      </header>
+      <div class="sub">おおきな すうじ を えらんで こたえよう</div>
+
+      <!-- レベル選択：幼児向け簡易表現 -->
+      <div class="levels" role="group" aria-label="レベル選択">
+        <button class="levelBtn" data-level="L1" id="lv1" aria-pressed="true">やさしい<small>3もん / こたえ 1–5</small></button>
+        <button class="levelBtn" data-level="L2" id="lv2" aria-pressed="false">ふつう<small>5もん / こたえ 1–10</small></button>
+        <button class="levelBtn" data-level="L3" id="lv3" aria-pressed="false">むずかしい<small>10もん / こたえ 1–20</small></button>
+      </div>
+
+      <!-- 数字ボタン（レベルに応じて 1–5 / 1–10 / 1–20 を動的生成） -->
+      <div class="btnRow" id="btnRow" role="group" aria-label="数字ボタン"></div>
+
+      <div class="actions">
+        <button class="secondary" id="retry" title="リトライ">リトライ</button>
+        <button class="primary" id="start" title="スタート">スタート</button>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+  (function(){
+    'use strict';
+    /* ============================================================
+       使い方メモ（仕様に沿った実装方針）
+       - 1ファイル完結。外部依存なし。
+       - iOS 向け viewport と Pointer Events を採用。
+       - 効果音：初回タップで WebAudio を解錠 → 以降は安全に再生。
+       - 60fps：常時ループは不要（描画要素はテキストのみ）。
+       - 問題表示は「大きな式テキスト」。玉は表示しない。
+       - 下パネル：レベル選択 → スタート → 3秒カウントダウン → 連続出題。
+         問題数・回答ボタン範囲はレベルに依存（L1:3問/1–5, L2:5問/1–10, L3:10問/1–20）。
+       - 計測：各問の経過時間を合算。終了時に正答数と合計秒を表示。
+       ============================================================ */
+
+    /*--------------------------- ユーティリティ ---------------------------*/
+    const $  = (q, el=document)=>el.querySelector(q);
+    const $$ = (q, el=document)=>Array.from(el.querySelectorAll(q));
+    // タイマー一元管理（リセット時に全クリアしてレース回避）
+    let timers = [];
+    const tset = (fn, ms)=>{ const id = setTimeout(fn, ms); timers.push(id); return id; };
+    const clearTimers = ()=>{ for(const id of timers) clearTimeout(id); timers.length = 0; };
+
+    /*--------------------------- 効果音（WebAudio） ---------------------------*/
+    let audioCtx = null;       // AudioContext 実体
+    let audioUnlocked = false; // 解錠フラグ（iOS 対策）
+
+    function ensureAudio(){
+      if (audioUnlocked) return;
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({latencyHint:'interactive'});
+      if (audioCtx.state !== 'running') audioCtx.resume();
+      audioUnlocked = true;
+    }
+
+    // 単純なビープ生成
+    function beep({freq=440, dur=0.08, type='sine', gain=0.2, when=0, endGain=0.0001}){
+      if (!audioUnlocked) return; // 未解錠なら無音
+      const t0 = audioCtx.currentTime + when;
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(gain, t0);
+      g.gain.exponentialRampToValueAtTime(endGain, t0 + dur);
+      o.connect(g).connect(audioCtx.destination); o.start(t0); o.stop(t0 + dur + 0.02);
+    }
+
+    // 用途別 SFX
+    const sfxTap = ()=>beep({freq:280, dur:0.05, type:'triangle', gain:0.15});
+    const sfxOk  = ()=>{ beep({freq:520, dur:0.07, type:'sine', gain:0.18}); beep({freq:820, dur:0.07, type:'sine', gain:0.16, when:0.06}); };
+    const sfxNg  = ()=>{ beep({freq:180, dur:0.11, type:'square', gain:0.18});  beep({freq:140, dur:0.12, type:'square', gain:0.16, when:0.06}); };
+    const sfxTick= ()=>beep({freq:480, dur:0.06, type:'square', gain:0.16});
+    const sfxGo  = ()=>{ beep({freq:700, dur:0.08, type:'triangle', gain:0.20}); beep({freq:1000, dur:0.10, type:'triangle', gain:0.18, when:0.08}); };
+
+    // 最初の pointerdown で解錠（どこでもOK）
+    const unlock = ()=>{ ensureAudio(); document.removeEventListener('pointerdown', unlock, true); };
+    document.addEventListener('pointerdown', unlock, true);
+
+    /*--------------------------- 要素参照 ---------------------------*/
+    const statusEl = $('#status');     // レベル/Q 番号
+    const eqBig    = $('#eqBig');      // 大きな式
+    const judgeEl  = $('#judge');      // 正解/不正解表示
+    const toast    = $('#toast');
+    const overlay  = $('#overlay');
+    const overlayText = $('#overlayText');
+    const resultPanel = $('#resultPanel');
+
+    const btnRow = $('#btnRow');
+    const startBtn = $('#start');
+    const retryBtn = $('#retry');
+    const levelBtns = $$('.levelBtn');
+
+    /*--------------------------- レベル定義 ---------------------------*/
+    const LEVELS = {
+      L1: { label:'やさしい', maxAns:5,  qTotal:3,  sumMax:5 },   // 1–5, 3問, 合計≤5
+      L2: { label:'ふつう',   maxAns:10, qTotal:5,  sumMax:10 },  // 1–10, 5問, 合計≤10
+      L3: { label:'むずかしい',maxAns:20, qTotal:10, sumMax:18 }, // 1–20, 10問, 合計≤18
+    };
+
+    /*--------------------------- ゲーム状態 ---------------------------*/
+    const state = {
+      levelKey: 'L1',            // 現在のレベル
+      a: 0, b: 0,                 // 現在の 2 つの加数
+      started: false,
+      qIndex: 0,                  // 1..qTotal
+      qTotal: LEVELS['L1'].qTotal,
+      correct: 0,                 // 正答数
+      totalMs: 0,                 // 合計回答時間（ms）
+      qStartTs: 0,                // 問の開始時刻（ms）
+      accepting: false,           // 入力受付中か
+    };
+
+    /*--------------------------- 問題生成（レベル別） ---------------------------*/
+    function rand(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+
+    function makeProblem(){
+      const L = LEVELS[state.levelKey];
+      let a,b,s;
+      if (state.levelKey === 'L3'){
+        a = rand(1,9); b = rand(1,9); s = a+b; // 1–9 全組合せ（合計≤18）
+      }else{
+        const sMax = L.sumMax; // L1:5, L2:10
+        s = rand(2, sMax);     // 合計値を先に決める
+        a = rand(1, Math.min(9, s-1));
+        b = s - a;
+      }
+      // 時々左右を入れ替え
+      if (Math.random()<0.5){ const t=a; a=b; b=t; }
+      state.a = a; state.b = b;
+      eqBig.textContent = `${a} + ${b} = ?`;
+      judgeEl.textContent = ' ';
+      judgeEl.className = 'pill result';
+      state.qStartTs = performance.now();
+      state.accepting = true; // 入力受付開始
+      statusEl.textContent = `${LEVELS[state.levelKey].label} / もん ${state.qIndex} / ${state.qTotal}`;
+    }
+
+    /*--------------------------- 数字ボタン生成/制御 ---------------------------*/
+    function buildNumButtons(max){
+      btnRow.innerHTML = '';
+      for (let n=1; n<=max; n++){
+        const b = document.createElement('button');
+        b.className = 'num'; b.textContent = String(n); b.setAttribute('data-n', String(n)); b.disabled = true;
+        b.addEventListener('pointerup', onAnswer, {passive:true});
+        btnRow.appendChild(b);
+      }
+    }
+    function setNumButtonsEnabled(on){ $$('#btnRow .num').forEach(b=>b.disabled=!on); }
+
+    /*--------------------------- カウントダウン（3→2→1→START） ---------------------------*/
+    function countdown3(onDone){
+      // 直前の結果パネルを隠す
+      if (resultPanel) resultPanel.hidden = true;
+      overlayText.textContent = '3'; overlay.classList.add('show'); sfxTick();
+      tset(()=>{ overlayText.textContent='2'; sfxTick(); }, 1000);
+      tset(()=>{ overlayText.textContent='1'; sfxTick(); }, 2000);
+      tset(()=>{ overlayText.textContent='スタート'; sfxGo(); tset(()=>{ overlay.classList.remove('show'); onDone(); }, 350); }, 3000);
+    }
+
+    /*--------------------------- 解答処理 ---------------------------*/
+    function onAnswer(e){
+      if (!state.started || !state.accepting) return;
+      ensureAudio(); sfxTap();
+      state.accepting = false; setNumButtonsEnabled(false);
+      const ans = Number(e.currentTarget.getAttribute('data-n'))|0;
+      const ok = (ans === state.a + state.b);
+      // 計時
+      const now = performance.now(); const elapsed = Math.max(0, now - state.qStartTs); state.totalMs += elapsed;
+      // 音と表示
+      if (ok){ sfxOk(); state.correct++; judgeEl.textContent='せいかい'; judgeEl.className='pill result ok'; }
+      else   { sfxNg(); judgeEl.textContent=`ちがうよ（こたえ ${state.a + state.b}）`; judgeEl.className='pill result ng'; }
+      // トースト
+      toast.classList.remove('show'); void toast.offsetHeight; toast.classList.add('show');
+      toast.children[0].style.display = ok ? 'block':'none';
+      toast.children[1].style.display = ok ? 'none':'block';
+      tset(()=>toast.classList.remove('show'), 650);
+      // 次へ
+      tset(nextStep, 650);
+    }
+
+    /*--------------------------- 進行制御 ---------------------------*/
+    function nextStep(){
+      if (!state.started) return;
+      if (state.qIndex >= state.qTotal){ finishGame(); return; }
+      state.qIndex++;
+      makeProblem();
+      setNumButtonsEnabled(true);
+    }
+
+    function finishGame(){
+      state.started = false; setNumButtonsEnabled(false);
+      const sec = (state.totalMs/1000).toFixed(2);
+      statusEl.textContent = 'けっか';
+      judgeEl.textContent = `せいかい ${state.correct} / ${state.qTotal} ・ ${sec} びょう`;
+      judgeEl.className = 'pill result';
+      // 結果パネルに差し替え（overlay の中身は固定。結果は別ノードで表示）
+      if (resultPanel){
+        resultPanel.innerHTML = `
+          <h2>けっか</h2>
+          <p>せいかい：<strong>${state.correct} / ${state.qTotal}</strong></p>
+          <p>あわせたじかん：<strong>${sec} びょう</strong></p>
+          <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;">
+            <button id="again" class="primary" style="padding:10px 16px;border-radius:12px;border:0;background:var(--accent);color:#00121a;font-weight:900;">もういっかい</button>
+          </div>
+        `;
+        resultPanel.hidden = false;
+      }
+      overlay.classList.add('show');
+      const againBtn = $('#again');
+      if (againBtn){
+        againBtn.addEventListener('pointerup', ()=>{
+          sfxTap();
+          overlay.classList.remove('show');
+          resetGame(true);
+        }, {passive:true, once:true});
+      }
+    }
+
+    function resetGame(keepUnlocked=false){
+      if (!keepUnlocked){ audioUnlocked=false; document.addEventListener('pointerdown', unlock, true); }
+      clearTimers();
+      state.started=false; state.qIndex=0; state.correct=0; state.totalMs=0; state.accepting=false;
+      eqBig.textContent=' '; judgeEl.textContent=' '; judgeEl.className='pill result';
+      statusEl.textContent = 'レベルをえらんで スタート';
+      if (resultPanel) resultPanel.hidden = true;
+      if (overlay) overlay.classList.remove('show');
+      if (overlayText) overlayText.textContent = '';
+      setNumButtonsEnabled(false);
+    }
+
+    function startGame(){
+      if (state.started) return; // 二重起動防止
+      ensureAudio(); sfxTap();
+      resetGame(true);
+      clearTimers();
+      state.started = true; state.qTotal = LEVELS[state.levelKey].qTotal; statusEl.textContent='カウントダウン';
+      countdown3(()=>{ state.qIndex = 1; makeProblem(); setNumButtonsEnabled(true); });
+    }
+
+    /*--------------------------- レベル選択 ---------------------------*/
+    function buildForLevel(key){
+      buildNumButtons(LEVELS[key].maxAns);
+    }
+    function setLevel(key){
+      state.levelKey = key; state.qTotal = LEVELS[key].qTotal;
+      levelBtns.forEach(btn=>btn.setAttribute('aria-pressed', String(btn.dataset.level===key)));
+      buildForLevel(key);
+      statusEl.textContent = `${LEVELS[key].label} をえらんだよ`;
+      eqBig.textContent = ' '; judgeEl.textContent=' '; setNumButtonsEnabled(false);
+    }
+
+    /*--------------------------- イベント登録 ---------------------------*/
+    levelBtns.forEach(btn=>btn.addEventListener('pointerup', (e)=>{ ensureAudio(); if (state.started){ sfxNg(); return; } sfxTap(); setLevel(e.currentTarget.dataset.level); }, {passive:true}));
+    startBtn.addEventListener('pointerup', startGame, {passive:true});
+    retryBtn.addEventListener('pointerup', ()=>{ ensureAudio(); sfxTap(); resetGame(true); }, {passive:true});
+
+    /*--------------------------- 初期化 ---------------------------*/
+    setLevel('L1');   // 初期レベルは L1
+    buildNumButtons(LEVELS['L1'].maxAns);
+  })();
+  </script>
+</body>
+</html>
